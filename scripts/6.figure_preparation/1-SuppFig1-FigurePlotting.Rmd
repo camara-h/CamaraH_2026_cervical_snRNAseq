@@ -276,7 +276,7 @@ c <- ggplot(total, aes(x = normalized_sample * 100, y = Normalized, color = data
   geom_point() +
   labs(
     x = "Population Percentage",
-    y = "Normalized UCP1 Expression \n or BAT Population",
+    y = str_wrap("Normalized Thermogenic Signal (NS)", 25),
     color = "Dataset"
   ) +
   theme_nature_metabolism() +
@@ -296,15 +296,35 @@ c <- ggplot(total, aes(x = normalized_sample * 100, y = Normalized, color = data
 ```
 
 ```{r}
-total |> count(dataset_renamed)
-total |> count(dataset_renamed, Normalized > 0.8, Normalized > 0.5,Normalized > 0.20)
+library(dplyr)
+
+total_counts <- total |>
+  mutate(
+    NS_group = case_when(
+      Normalized > 0.8 ~ "Strong: NS > 0.8",
+      Normalized > 0.2 ~ "Intermediate: 0.2 < NS ≤ 0.8",
+      TRUE ~ "Low: NS ≤ 0.2"
+    )
+  ) |>
+  count(dataset_renamed, NS_group)
+total_counts
+
+total |>
+  mutate(
+    NS_group = case_when(
+      Normalized > 0.8 ~ "Strong: NS > 0.8",
+      Normalized > 0.2 ~ "Intermediate: 0.2 < NS ≤ 0.8",
+      TRUE ~ "Low: NS ≤ 0.2"
+    )
+  ) |>
+  count(NS_group)
 ```
 # --- Plotting ---
-``` {r fig.width = 1.968504, fig.height = 1.377953}
+``` {r fig.width = 2.952756, fig.height = 1.377953}
 total |> count(dataset_renamed, Normalized > 0.8,Normalized > 0.20) |> group_by(`Normalized > 0.8`, `Normalized > 0.2`) |> summarise(sum(n))
 nrow(total)
 
-mm_to_in(c(50, 35))
+mm_to_in(c(75, 35))
 c <- c + 
   # plot_annotation(tag_levels = list("B")) + 
   theme(plot.tag = element_text(size = 6, face = "plain")) + labs(title = "Distribution of Thermogenic Samples\nin Cervical AT Datasets") + theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 3)) + 
@@ -313,7 +333,7 @@ c <- c +
 ) 
 c
 
-ggsave(file.path(OUTPUT_DIR, "S1B_thermogenic_sample_distribution.pdf"), plot = c, width = 50, height = 35, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "S1B_thermogenic_sample_distribution.pdf"), plot = c, width = 75, height = 35, units = "mm", bg = "white",  dpi = 600)
 
 
 
