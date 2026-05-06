@@ -1,0 +1,239 @@
+---
+title: "Sondergaard_Analysis"
+output: html_document
+date: "2024-12-16"
+---
+
+# Introduction
+
+This notebook processes the raw Affymetrix CEL files from the
+Sondergaard paraganglioma dataset, extracts HEAT-signature genes,
+saves an expression matrix for downstream use, and computes ssGSEA
+HEAT scores together with UCP1 expression for inspection.
+
+The main saved output retained from the original workflow is:
+
+- `GSE49795_Ohja_expression_matrix.rds`
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(affy)   # Older Affymetrix arrays
+library(oligo)  # Newer/high-density Affymetrix arrays
+library(hugene10sttranscriptcluster.db)
+library(AnnotationDbi)
+library(GSVA)
+library(GSEABase)
+library(pheatmap)
+library(tidyverse)
+library(here)
+
+# -------------------------------------------------------------------------
+# Resolve package conflicts
+# -------------------------------------------------------------------------
+conflicts_prefer(affy::list.celfiles)
+conflicts_prefer(oligo::rma)
+
+# -------------------------------------------------------------------------
+# Define input and output paths
+# -------------------------------------------------------------------------
+# Inputs
+CEL_FILES <- here("data/5.published_datasets/Public_BulkRNAseq/Sondergaard 2014 - Paraganglioma patient")
+HEAT_CSV <- here("output/3.heat_signature/data/heat_signature.csv")
+
+# Outputs
+OUTPUT_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/data/")
+dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
+
+OUTPUT_SSGSEA_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/data/ssGSEA")
+dir.create(OUTPUT_SSGSEA_DIR, showWarnings = FALSE, recursive = TRUE)
+
+OUTPUT_EXP_MTX <- file.path(OUTPUT_DIR, "GSE49795_Sondergaard_expression_matrix.rds")
+```
+
+# Load CEL files
+
+The raw data are distributed as Affymetrix CEL files and are read with
+`oligo`.
+
+```{r}
+oligo_data <- read.celfiles(list.celfiles(CEL_FILES, full.names = TRUE))
+
+annotation(oligo_data)
+```
+
+# Background correction and normalization
+
+The `rma()` workflow performs background correction, quantile
+normalization, and summarization.
+
+```{r}
+eset <- rma(oligo_data)
+```
+
+# Extract expression matrix
+
+```{r}
+expr_matrix <- exprs(eset)
+```
+
+# Map probe IDs to gene symbols
+
+The Affymetrix probe IDs are mapped to gene symbols using the
+`hugene10sttranscriptcluster.db` annotation package.
+
+```{r}
+transcript_ids <- rownames(expr_matrix)
+
+gene_symbols <- mapIds(
+  hugene10sttranscriptcluster.db,
+  keys = transcript_ids,
+  column = "SYMBOL",
+  keytype = "PROBEID"
+)
+
+expr_matrix <- cbind(expr_matrix, GeneSymbol = gene_symbols)
+```
+
+# Remove probes without gene symbols
+
+```{r}
+sum(is.na(gene_symbols))
+
+expr_matrix_filtered <- expr_matrix[!is.na(gene_symbols), ]
+```
+
+# Extract HEAT genes
+
+This section restricts the dataset to genes present in the HEAT
+signature and reshapes the data into a small expression matrix.
+
+```{r}
+HEAT <- read.csv(HEAT_CSV, header = TRUE)
+
+HEAT_data <- as.data.frame(expr_matrix_filtered) %>%
+  dplyr::filter(GeneSymbol %in% HEAT$x) %>%
+  rownames_to_column(var = "probeid") %>%
+  gather(., 2:4, key = "sample", value = "value") %>%
+  mutate(value = as.numeric(value)) %>%
+  spread(sample, value) %>%
+  dplyr::select(-probeid)
+
+expression_matrix <- as.matrix(HEAT_data[, 2:4])
+rownames(expression_matrix) <- HEAT_data$GeneSymbol
+```
+
+# Clean duplicated genes and zero-variance rows
+
+Multiple probes can map to the same gene. The original workflow made
+row names unique and removed genes with zero variance before saving.
+
+```{r}
+rownames(expression_matrix) <- make.unique(rownames(expression_matrix))
+
+duplicated_rows <- duplicated(rownames(expression_matrix))
+rownames(expression_matrix)[duplicated_rows]
+
+zero_sd_rows <- apply(expression_matrix, 1, sd) == 0
+expression_matrix <- expression_matrix[!zero_sd_rows, ]
+
+expression_matrix <- expression_matrix[order(rownames(expression_matrix)), ]
+
+colnames(expression_matrix) <- c(
+  "Patient Subcutaneous",
+  "Patient Visceral",
+  "Control Visceral"
+)
+```
+
+# Save expression matrix
+
+```{r}
+write_rds(expression_matrix, OUTPUT_EXP_MTX)
+```
+
+# Plot heatmap
+
+This heatmap was kept because it is part of the original script flow,
+even though it is not saved to disk.
+
+```{r}
+pheatmap::pheatmap(
+  expression_matrix,
+  scale = "row",
+  clustering_distance_rows = "euclidean",
+  cellwidth = 5,
+  cellheight = 5,
+  fontsize = 6,
+  clustering_distance_cols = "euclidean",
+  clustering_method = "complete",
+  main = "Gene Expression Heatmap"
+)
+```
+
+# Run ssGSEA using the HEAT signature
+
+This section computes ssGSEA HEAT scores from the filtered expression
+matrix.
+
+```{r}
+pheo <- as.data.frame(expr_matrix_filtered)
+rownames(pheo) <- NULL
+
+pheo <- pheo[!duplicated(pheo$GeneSymbol), ]
+rownames(pheo) <- NULL
+
+pheo <- pheo %>%
+  rename(
+    sample1 = "GSM1207166_M242-01.CEL",
+    sample2 = "GSM1207167_M242-02.CEL",
+    sample3 = "GSM1207168_M242-03.CEL"
+  ) %>%
+  column_to_rownames(var = "GeneSymbol") %>%
+  mutate(
+    sample1 = as.numeric(sample1),
+    sample2 = as.numeric(sample2),
+    sample3 = as.numeric(sample3)
+  ) %>%
+  as.matrix()
+
+heat_collection <- GeneSetCollection(
+  GeneSet(
+    unique(HEAT_data$GeneSymbol),
+    setName = "HEAT"
+  )
+)
+
+expr_set <- ExpressionSet(assayData = pheo)
+
+pheo.gsea <- gsva(ssgseaParam(expr_set, heat_collection))
+
+t(pheo.gsea@assayData$exprs)
+
+# Sample 1 is Patient Subcutaneous
+# Sample 2 is Patient Visceral
+# Sample 3 is Control Visceral
+```
+
+# Add UCP1 expression to ssGSEA output
+
+```{r}
+goi_idx <- grep("UCP1|CKMT2", expr_matrix_filtered[, 4])
+colnames(expr_matrix_filtered)
+
+goi_exp <- expr_matrix_filtered[goi_idx, 1:4] |>
+  as_tibble() |>
+  column_to_rownames("GeneSymbol") |>
+  t() |>
+  as.data.frame() |>
+  mutate(across(everything(), as.numeric))
+
+pheo.gsea.ucp <- t(pheo.gsea@assayData$exprs)
+pheo.gsea.ucp <- cbind(pheo.gsea.ucp, goi_exp) |> rownames_to_column("sample")
+pheo.gsea.ucp$group <- c("Patient Subcutaneous", "Patient Visceral", "Control Visceral")
+
+
+# Save file
+write_csv(pheo.gsea.ucp, file.path(OUTPUT_SSGSEA_DIR, "Sondergaard_HEATvUCP1.csv"))
+```

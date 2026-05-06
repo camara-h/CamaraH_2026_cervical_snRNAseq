@@ -1,0 +1,783 @@
+---
+title: "Plots for Figure 1"
+output: html_document
+date: "2025-01-14"
+---
+
+# Purpose
+
+This notebook assembles the plots used in Figure 1 of the manuscript.
+It mainly reads the cleaned Seurat object and upstream summary tables, then
+formats the specific figure panels for export.
+
+# Inputs and outputs
+
+Main inputs:
+- cleaned Seurat object
+- propeller cell proportion table
+- propeller statistical summary table
+- subject information table
+- shared plotting themes and manuscript color palettes
+
+Main outputs:
+- Figure 1 panel PDFs
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Seurat)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+library(speckle)
+library(ggnewscale)
+library(here)
+library(openxlsx)
+
+# Shared plotting functions and manuscript palettes
+source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
+
+# -------------------------------------------------------------------------
+# Define inputs
+# -------------------------------------------------------------------------
+SEURAT_FILE <- here(
+  "data",
+  "adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"
+)
+
+SUBJECT_INFO_FILE <- here(
+  "data",
+  "2023-09-14_SubjectInformationTable.xlsx"
+)
+
+PROPELLER_PROPORTIONS <- here(
+  "output", "2.sobject_characterization", "propeller", "data",
+  "cellular_proportions_table.csv"
+)
+
+PROPELLER_STATS <- here(
+  "output", "2.sobject_characterization", "propeller", "data",
+  "proportions_stat_table.csv"
+)
+
+# -------------------------------------------------------------------------
+# Define outputs
+# -------------------------------------------------------------------------
+OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_1")
+dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
+```
+
+# Load the main Seurat object
+
+The starting point for this figure script is the cleaned integrated Seurat
+object generated upstream.
+
+```{r}
+s.object <- readRDS(SEURAT_FILE)
+```
+
+# Panel 1b. Demographics table
+
+This chunk loads the subject information table used for the demographic
+summary associated with Figure 1.
+
+```{r}
+subject_info <- openxlsx::read.xlsx(
+  SUBJECT_INFO_FILE,
+  sheet = "Labs",
+  rows = 1:19
+)
+
+subject_info
+summary(subject_info)
+```
+
+# Panel 1e. Violin plot of marker genes
+
+This panel visualizes marker genes used to support cell type annotation in the
+main dataset.
+
+```{r}
+features <- c(
+  "ADIPOQ", "PPARG", "PPARGC1A", "PDGFRA", "DCN", "JAM2", "SHANK3",
+  "PROX1", "STEAP4", "MYOCD", "CD163", "CPA3", "IL7R", "MS4A1",
+  "CSF3R", "CDH19", "CNTNAP5", "PTH", "PRM1"
+)
+
+gg_violin <- VlnPlot(
+  s.object,
+  features = features,
+  flip = TRUE,
+  stack = TRUE,
+  group.by = "cell_type_short",
+  combine = TRUE
+) +
+  scale_fill_manual(values = gene_type_palette) +
+  NoLegend() +
+  theme(
+    axis.text.x = element_text(size = 6, face = "plain"),
+    axis.title.y = element_text(size = 6, face = "plain"),
+    axis.text.y.right = element_text(size = 6, face = "plain"),
+    strip.text = element_text(size = 6, face = "plain"),
+    strip.background = element_rect(linewidth = 0.3),
+    axis.line = element_line(color = "black", linewidth = 0.3),
+    axis.ticks = element_line(color = "black", linewidth = 0.3),
+    axis.title.x = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+# Preserve the thinner violin outline used in the original script
+gg_violin$layers[[1]]$aes_params$size <- 0.3
+```
+
+```{r, fig.width = 2.755906, fig.height = 2.362205}
+mm_to_in(c(70, 60))
+
+gg_violin <- gg_violin +
+  theme(plot.tag = element_text(size = 6, face = "plain")) +
+  labs(title = "Expression of Cell Type Marker Genes") +
+  theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5))
+
+gg_violin
+
+ggsave(
+  file.path(OUTPUT_DIR, "Figure_1_D.pdf"),
+  plot = gg_violin,
+  width = 70,
+  height = 60,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+```
+
+# Panel 1f. Comparison of cell type abundance
+
+This panel reads the propeller-derived cellular abundance tables calculated
+upstream and plots regional differences in cell type proportions.
+
+```{r}
+propeller_proportions <- read_csv(PROPELLER_PROPORTIONS)
+propeller_stats <- read_csv(PROPELLER_STATS)
+```
+
+```{r}
+# Adjust statistic color display
+propeller_stats$colors <- ifelse(propeller_stats$p.val < 0.05, "red", "black")
+```
+
+
+```{r fig.height = 4, fig.width = 10}
+p_value_y_position <- max(propeller_stats$y.position)
+
+order <- propeller_proportions %>%
+  group_by(clusters) %>%
+  summarise(avg_pct = mean(n_pct), .groups = "drop") %>%
+  arrange(desc(avg_pct)) %>%
+  pull(clusters)
+
+propeller_proportions <- propeller_proportions %>%
+  mutate(
+    neck_region = factor(
+      neck_region,
+      levels = c("Superficial", "Intermediate", "Deep")
+    )
+  )
+
+gg_propeller <- ggplot(
+  propeller_proportions,
+  aes(x = clusters, y = n_pct, fill = neck_region)
+) +
+  geom_boxplot(
+    outlier.shape = NA,
+    position = position_dodge(width = 0.75),
+    alpha = 0.75
+  ) +
+  geom_jitter(
+    color = "black",
+    shape = 21,
+    alpha = 0.9,
+    size = 1,
+    position = position_jitterdodge(
+      jitter.width = 0.1,
+      dodge.width = 0.75
+    )
+  ) +
+  scale_fill_manual(values = neck.color, name = "Neck Region") +
+  scale_color_manual(values = neck.color, name = "Neck Region") +
+  new_scale_color() +
+  stat_pvalue_manual(
+    data = propeller_stats,
+    color = "colors",
+    xmin = "xmin",
+    xmax = "xmax",
+    label = "p_display",
+    y.position = "y.position",
+    vjust = -0.2,
+    tip.length = 0.006,
+    inherit.aes = FALSE,
+    size = 6 / .pt
+  ) +
+  scale_color_identity(guide = "none") +
+  coord_cartesian(ylim = c(NA, p_value_y_position + 2)) +
+  ggpubr::grids(axis = "y") +
+  scale_x_discrete(limits = order) +
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+    axis.title.x = element_blank(),
+    legend.position = c(1, 0.80),
+    legend.justification = c("right", "top"),
+    line = element_line(linewidth = 0.1)
+  ) +
+  ylab("Proportion of Cells in Sample")
+```
+
+```{r, fig.width = 7.086614, fig.height = 1.574803}
+mm_to_in(c(180, 40))
+
+gg_propeller <- gg_propeller +
+  theme(plot.tag = element_text(size = 6, face = "plain")) +
+  labs(title = "Cell Type Abundance per Cervical Adipose Tissue Depot") +
+  theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5)) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.1)))
+
+gg_propeller
+
+ggsave(
+  file.path(OUTPUT_DIR, "Figure_1_E.pdf"),
+  plot = gg_propeller,
+  width = 180,
+  height = 40,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+
+pdf(
+  file.path(OUTPUT_DIR, "Figure_1_E.pdf"),
+  width = mm_to_in(180),
+  height = mm_to_in(40)
+)
+gg_propeller
+dev.off()
+```
+
+```{r}
+# -----------------------------
+#  Prepare subplots 
+# -----------------------------
+
+abundance_cutoff <- 3
+
+high_label <- paste0("Mean abundance ≥ ", abundance_cutoff, "%")
+low_label  <- paste0("Mean abundance < ", abundance_cutoff, "%")
+
+cluster_abundance <- propeller_proportions %>%
+  group_by(clusters) %>%
+  summarise(avg_pct = mean(n_pct, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    abundance_group = if_else(
+      avg_pct < abundance_cutoff,
+      low_label,
+      high_label
+    )
+  )
+
+propeller_proportions_plot <- propeller_proportions %>%
+  left_join(cluster_abundance, by = "clusters") %>%
+  mutate(
+    abundance_group = factor(
+      abundance_group,
+      levels = c(high_label, low_label)
+    ),
+    neck_region = factor(
+      neck_region,
+      levels = c("Superficial", "Intermediate", "Deep")
+    )
+  )
+
+# -----------------------------
+#  Create Inputs Function
+# -----------------------------
+prepare_propeller_plot_inputs <- function(
+    plot_data,
+    stats_data,
+    cluster_col_stats = "cell_type_short",
+    y_expand = 0.08,
+    bracket_width = 0.20
+) {
+  
+  cluster_order <- plot_data %>%
+    group_by(clusters) %>%
+    summarise(avg_pct = mean(n_pct, na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(avg_pct)) %>%
+    pull(clusters)
+  
+  plot_data <- plot_data %>%
+    mutate(
+      clusters = factor(clusters, levels = cluster_order)
+    )
+  
+  panel_range <- range(plot_data$n_pct, na.rm = TRUE)
+  y_offset <- diff(panel_range) * y_expand
+  
+  if (!is.finite(y_offset) || y_offset == 0) {
+    y_offset <- max(plot_data$n_pct, na.rm = TRUE) * y_expand
+  }
+  
+  if (!is.finite(y_offset) || y_offset == 0) {
+    y_offset <- 0.1
+  }
+  
+  y_positions <- plot_data %>%
+    group_by(clusters) %>%
+    summarise(
+      y.position = max(n_pct, na.rm = TRUE) + y_offset,
+      .groups = "drop"
+    ) %>%
+    mutate(
+      clusters_chr = as.character(clusters)
+    )
+  
+  stats_data_plot <- stats_data %>%
+    select(
+      -any_of(c(
+        "x_position",
+        "xmin",
+        "xmax",
+        "y.position",
+        "y.position.x",
+        "y.position.y",
+        "clusters"
+      ))
+    ) %>%
+    filter(.data[[cluster_col_stats]] %in% cluster_order) %>%
+    left_join(
+      y_positions %>%
+        select(clusters_chr, y.position),
+      by = setNames("clusters_chr", cluster_col_stats)
+    ) %>%
+    mutate(
+      x_position = match(.data[[cluster_col_stats]], cluster_order),
+      xmin = x_position - bracket_width,
+      xmax = x_position + bracket_width,
+      clusters = factor(.data[[cluster_col_stats]], levels = cluster_order)
+    )
+  
+  list(
+    plot_data = plot_data,
+    stats_data = stats_data_plot,
+    cluster_order = cluster_order
+  )
+}
+
+# -----------------------------
+#  Plotting function 
+# -----------------------------
+make_propeller_plot <- function(
+    plot_data,
+    stats_data = NULL,
+    cluster_order = NULL,
+    plot_title = NULL,
+    show_legend = TRUE
+) {
+  
+  if (is.null(cluster_order)) {
+    cluster_order <- plot_data %>%
+      group_by(clusters) %>%
+      summarise(avg_pct = mean(n_pct, na.rm = TRUE), .groups = "drop") %>%
+      arrange(desc(avg_pct)) %>%
+      pull(clusters)
+  }
+  
+  p <- ggplot(
+    plot_data,
+    aes(x = clusters, y = n_pct, fill = neck_region)
+  ) +
+    geom_hline(yintercept = 40, linewidth = 0.3, color = 3, linetype = "dashed") + 
+    geom_boxplot(
+      outlier.shape = NA,
+      position = position_dodge(width = 0.75),
+      alpha = 0.75
+    ) +
+    geom_jitter(
+      color = "black",
+      shape = 21,
+      alpha = 0.9,
+      size = 1,
+      position = position_jitterdodge(
+        jitter.width = 0.1,
+        dodge.width = 0.75
+      )
+    ) +
+    scale_fill_manual(values = neck.color, name = "Neck Region") +
+    scale_color_manual(values = neck.color, name = "Neck Region") +
+    scale_x_discrete(limits = cluster_order) +
+    ggpubr::grids(axis = "y") +
+    theme_nature_metabolism() +
+    theme(
+      axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+      axis.title.x = element_blank(),
+      legend.position = if (show_legend) c(1, 0.80) else "none",
+      legend.justification = c("right", "top"),
+      line = element_line(linewidth = 0.1)
+    ) +
+    ylab("Proportion of Cells in Sample") +
+    ggtitle(plot_title)
+  
+  if (!is.null(stats_data) && nrow(stats_data) > 0) {
+    
+    y_range <- range(plot_data$n_pct, na.rm = TRUE)
+    y_padding <- diff(y_range) * 0.15
+    
+    if (!is.finite(y_padding) || y_padding == 0) {
+      y_padding <- max(plot_data$n_pct, na.rm = TRUE) * 0.15
+    }
+    
+    if (!is.finite(y_padding) || y_padding == 0) {
+      y_padding <- 0.1
+    }
+    
+    p <- p +
+      new_scale_color() +
+      stat_pvalue_manual(
+        data = stats_data,
+        color = "colors",
+        xmin = "xmin",
+        xmax = "xmax",
+        label = "p_display",
+        y.position = "y.position",
+        vjust = -0.2,
+        tip.length = 0.006,
+        inherit.aes = FALSE,
+        size = 6 / .pt
+      ) +
+      scale_color_identity(guide = "none") +
+      coord_cartesian(
+        ylim = c(
+          NA,
+          max(stats_data$y.position, na.rm = TRUE) + y_padding
+        )
+      )
+  }
+  
+  p
+}
+
+# -----------------------------
+#  Create plots 
+# -----------------------------
+propeller_plot_inputs <- list()
+propeller_plots <- list()
+clusters_per_plot <- vector()
+
+for (group_name in levels(propeller_proportions_plot$abundance_group)) {
+  
+  plot_data_group <- propeller_proportions_plot %>%
+    filter(abundance_group == group_name)
+  
+  cluster_in_plot <- length(unique(plot_data_group$clusters))
+  clusters_per_plot <- c(clusters_per_plot, cluster_in_plot)
+  
+  if (nrow(plot_data_group) == 0) {
+    next
+  }
+  
+  propeller_plot_inputs[[group_name]] <- prepare_propeller_plot_inputs(
+    plot_data = plot_data_group,
+    stats_data = propeller_stats,
+    cluster_col_stats = "cell_type_short",
+    y_expand = 0.08,
+    bracket_width = 0.20
+  )
+  
+  propeller_plots[[group_name]] <- make_propeller_plot(
+    plot_data = propeller_plot_inputs[[group_name]]$plot_data,
+    stats_data = propeller_plot_inputs[[group_name]]$stats_data,
+    cluster_order = propeller_plot_inputs[[group_name]]$cluster_order,
+    plot_title = group_name,
+    show_legend = TRUE
+  )
+}
+
+# -----------------------------
+#  Display plots 
+# -----------------------------
+propeller_plots
+
+```
+
+```{r, fig.width = 7.086614, fig.height = 1.968504, warning=FALSE}
+mm_to_in(c(180, 50))
+
+plot_widths <- clusters_per_plot / sum(clusters_per_plot)
+
+gg_propeller_v2 <- wrap_plots(
+  propeller_plots,
+  widths = plot_widths
+)
+
+gg_propeller_v2
+
+ggsave(
+  file.path(OUTPUT_DIR, "Figure_1_E.v2.pdf"),
+  plot = gg_propeller_v2,
+  width = 180,
+  height = 50,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+```
+
+# Panel 1d. Initial UMAP plot
+
+This panel shows the main UMAP colored by simplified cell type labels used in
+the manuscript.
+
+```{r, fig.width = 5, fig.height = 4}
+scale_factor <- 6
+gg_umap <- DimPlot(
+  s.object,
+  reduction = "umap",
+  group.by = "cell_type_short",
+  label = TRUE,
+  label.size = 6 * scale_factor/ .pt,
+  repel = TRUE
+) +
+  scale_color_manual(values = palette.use, breaks = order)+
+  theme_nature_metabolism() +
+  theme_void() +
+  theme(
+    plot.title = element_blank(),
+    legend.text = element_text(size = 6 * scale_factor),
+    legend.key.size = unit(2.5 * scale_factor, "mm")
+  ) +
+  guides(
+    color = guide_legend(
+      ncol = 1,
+      override.aes = list(size = 1 * scale_factor)
+    )
+  ) 
+```
+
+```{r, fig.width = 2.755906 * 6, fig.height = 2.362205 * 6}
+mm_to_in(c(70, 60))
+
+gg_umap <- gg_umap +
+  labs(title = "Cervical AT snRNAseq\nUMAP Plot") +
+  theme(plot.title = element_text(size = 6 * scale_factor, face = "bold", hjust = 0.5))
+
+gg_umap
+
+ggsave(
+  file.path(OUTPUT_DIR, "Figure_1_C.pdf"),
+  plot = gg_umap,
+  width = 70* scale_factor,
+  height = 60* scale_factor,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+```
+
+# Supplementary marker dotplot. Beige, brown, and adipocyte marker programs
+
+This section reorganizes adipocytes by depot and visualizes classical and
+thermogenic marker programs across white and brown adipocyte groups.
+
+```{r, fig.width = 13.779528, fig.height = 3.937008}
+mm_to_in(c(100, 100))
+
+# -------------------------------------------------------------------------
+# Regroup adipocytes by depot
+# -------------------------------------------------------------------------
+meta <- s.object@meta.data
+
+meta <- meta %>%
+  mutate(
+    adipo_region = case_when(
+      str_detect(cell_type, " Adipocyte") ~ paste0(cell_type, " (", neck_region, ")"),
+      TRUE ~ "Other"
+    )
+  ) %>%
+  mutate(
+    adipo_region = case_when(
+      adipo_region == "Brown Adipocytes (Intermediate)" ~ "Other",
+      adipo_region == "Brown Adipocytes (Superficial)" ~ "Other",
+      TRUE ~ adipo_region
+    )
+  ) %>%
+  mutate(
+    adipo_region = factor(
+      adipo_region,
+      levels = c(
+        sort(unique(adipo_region[str_detect(adipo_region, "^Brown Adipocytes")])),
+        sort(unique(adipo_region[str_detect(adipo_region, "^White Adipocytes")])),
+        "Other"
+      )
+    )
+  )
+
+s.object@meta.data <- meta
+
+# -------------------------------------------------------------------------
+# Define marker gene groups
+# -------------------------------------------------------------------------
+adipo_markers <- c("ADIPOQ", "PPARG")
+white_markers <- c("LEP", "SLC7A10", "HOCX8", "HOXC9")
+thermogenic_markers <- c("UCP1", "PPARGC1A", "PRDM16", "EBF2", "DIO2")
+brown_markers <- c("EBF3", "FBXO31", "ZIC1", "MPZL2", "LHX8")
+beige_markers <- c("TBX1", "TMEM26", "TNFRSF9", "SHOX2")
+fcc_markers <- c("GAMT", "GATM", "SLC6A8", "ALPL", "CKB", "CKMT1A", "CKMT1B", "CKMT2")
+calcium_markers <- c("ATP2A2", "RYR2", "ARLN", "ALN", "ITPR1", "ITPR2")
+lipid_cyc_markers <- c("PNPLA2", "DGAT1")
+
+feature_groups <- list(
+  "General Adipocyte" = adipo_markers,
+  "White Adipocyte" = white_markers,
+  "Brown Adipocyte" = brown_markers,
+  "Beige Adipocyte" = beige_markers,
+  "Thermogenic Genes" = thermogenic_markers,
+  "FCC Genes" = fcc_markers,
+  "Calcium Cycling Genes" = calcium_markers,
+  "Lipid Cycling Genes" = lipid_cyc_markers
+)
+
+feature_groups <- lapply(feature_groups, function(gene_list) {
+  found_genes <- gene_list %in% rownames(s.object)
+  gene_list[found_genes]
+})
+
+group_labels <- c(
+  "General Adipocyte" = "Adipocyte",
+  "White Adipocyte" = "White",
+  "Brown Adipocyte" = "Brown",
+  "Beige Adipocyte" = "Beige",
+  "Thermogenic Genes" = "Classical Thermogenic",
+  "FCC Genes" = "Futile Creatine Cycling",
+  "Calcium Cycling Genes" = "Calcium Cycling",
+  "Lipid Cycling Genes" = "Lipid Cycling"
+)
+
+all_features <- unlist(feature_groups) %>% toupper()
+feature_order <- all_features
+
+# -------------------------------------------------------------------------
+# Create accessory plotting data for category brackets
+# -------------------------------------------------------------------------
+group_lengths <- lengths(feature_groups)
+group_ends <- cumsum(group_lengths)
+group_starts <- c(1, head(group_ends, -1) + 1)
+group_mids <- (group_starts + group_ends) / 2
+
+bracket_df <- data.frame(
+  group = names(feature_groups),
+  start = group_starts,
+  end = group_ends,
+  mid = group_mids,
+  label = str_wrap(unname(group_labels[names(feature_groups)]), width = 80)
+)
+
+# -------------------------------------------------------------------------
+# Alternating background panels by feature group
+# -------------------------------------------------------------------------
+panel_df <- bracket_df %>%
+  mutate(
+    xmin = start - 0.5,
+    xmax = end + 0.5,
+    fill = rep(c("white", "grey95"), length.out = n())
+  )
+
+# -------------------------------------------------------------------------
+# Build the dot plot
+# -------------------------------------------------------------------------
+dp <- DotPlot(
+  s.object,
+  features = all_features,
+  group.by = "adipo_region",
+  cols = c("lightgrey", "blue")
+)
+
+dp$data$features.plot <- factor(dp$data$features.plot, levels = feature_order)
+
+
+main_plot <- ggplot(dp$data, aes(x = features.plot, y = id)) +
+  geom_rect(
+    data = panel_df,
+    aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = fill),
+    inherit.aes = FALSE,
+    color = NA
+  ) +
+  geom_point(aes(size = pct.exp, color = avg.exp.scaled)) +
+  scale_fill_identity() +
+  scale_size_continuous(
+    limits = c(0, 100),
+    breaks = c(20, 40, 60, 80),
+    range = c(0, 5),
+    name = "% cells"
+  ) +
+  scale_color_gradient(
+    low = "lightgrey",
+    high = "blue",
+    limits = c(-2, 2),
+    breaks = seq(-2, 2, 1),
+    name = "Avg. expression"
+  ) +
+  labs(x = NULL, y = NULL) +
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 0, r = 10, b = 10, l = 10)
+  )
+
+bracket_plot <- ggplot(bracket_df) +
+  geom_segment(
+    aes(x = start - 0.2, xend = end + 0.2, y = 0.2, yend = 0.2),
+    linewidth = 0.3
+  ) +
+  geom_text(
+    aes(x = mid, y = 0.65, label = label),
+    size = 5 / .pt,
+    fontface = "bold"
+  ) +
+  scale_x_continuous(
+    limits = c(0.5, length(feature_order) + 0.5),
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    expand = c(0, 0)
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  theme(
+    plot.margin = margin(t = 5, r = 10, b = 0, l = 10)
+  )
+
+combined_plot <- bracket_plot / main_plot +
+  plot_layout(heights = c(2.2, 12))
+```
+
+```{r, fig.width = 7.086614, fig.height = 1.574803}
+mm_to_in(c(180, 40))
+
+combined_plot
+
+ggsave(
+  file.path(OUTPUT_DIR, "Figure_1G_Classical_markers.v2.pdf"),
+  plot = combined_plot,
+  width = 180,
+  height = 40,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+```

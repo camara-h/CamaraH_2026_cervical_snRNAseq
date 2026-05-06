@@ -1,0 +1,1392 @@
+---
+title: "3-FigurePlotting"
+author: "Henrique"
+date: "2025-07-17"
+output: html_document
+---
+# --- Setup ---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+mm_to_in <- function(mm) mm / 25.4
+
+# Load libraries
+library(Seurat)
+library(SeuratObject)
+library(ggplot2)
+library(RColorBrewer)
+library(VISION)
+library(Matrix)
+library(dplyr)
+library(CellChat)
+library(circlize) ### A tutorial on how to create your own circlize can be found here: https://r-graph-gallery.com/311-add-labels-to-hierarchical-edge-bundling.html
+library(ComplexHeatmap)
+library(NMF)
+library(stringr)
+library(readr)
+library(viridis)
+library(tidyverse)
+library(patchwork)
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(ggnewscale)
+
+conflicts_prefer(ggplot2::annotate)
+conflicts_prefer(base::unname)
+
+
+# Define short cell names
+cell_type_mapping <- c(
+  "Brown Adipocytes" = "BAds",
+  "White Adipocytes" = "WAds",
+  "Lipid Associated Macrophages" = "PreAds",
+  "ADIPOQ+ Smooth Muscle Cells" = "PreAds",
+  "Pre-adipocytes" = "PreAds",
+  "Adipocyte Progenitor Cells" = "ASPC",
+  "Mesenchymal Stem Cells" = "MSCs",
+  "Arterial Endothelial Cells" = "EndoCs",
+  "Venous Endothelial Cells" = "EndoCs",
+  "Capillary Endothelial Cells" = "EndoCs",
+  "Lymphatic Endothelial Cells" = "LECs",
+  "Pericytes" = "Pericytes",
+  "Smooth Muscle Cells" = "SMCs",
+  "Macrophages" = "Macro",
+  "Mast Cells" = "MastCs",
+  "T Lymphocytes" = "T Cells",
+  "B Lymphocytes" = "B Cells",
+  "Neutrophils" = "Neutrophils",
+  "Schwann Cells" = "SchwannCs",
+  "Neuron Associated Cells" = "NeuroCs",
+  "Parathyroid Associated Cells" = "ParaThyCs",
+  "PRM1+ Cells" = "PRM1+"
+)
+
+# OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
+source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
+
+# --- Setup paths ---
+
+## Inputs
+DESEQ_STATS_CSV <- here("output/4.downstream_pipelines/de_analysis/data/deseq2_stats.csv")
+GSEA_HALLMARK <- here("output/4.downstream_pipelines/de_analysis/data//HallMark_GSEA.csv")
+GSEA_GO <- here("output/4.downstream_pipelines/de_analysis/data//GO_GSEA.csv")
+GSEA_REACTOME <- here("output/4.downstream_pipelines/de_analysis/data//Reactome_GSEA.csv")
+
+CELLCHAT_DEEP <- here("output/4.downstream_pipelines/cellchat/data/cellchat_deep_pop.size.false_cell_type_short.rds")
+CELLCHAT_SUPERFICIAL <- here("output/4.downstream_pipelines/cellchat/data/cellchat_superficial_pop.size.false_cell_type_short.rds")
+CELLCHAT_MERGED <- here("output/4.downstream_pipelines/cellchat/data/cellchat_merged_pop.size.false_cell_type_short.rds")
+
+SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
+
+MEBOCOST_COMM_CSV <- here("output/4.downstream_pipelines/mebocost/data/communication_result_multi.csv")
+
+# Inputs to update
+HEATMAP_INPUT_RDS <- here("output/4.downstream_pipelines/de_analysis/data/heatmap_input.rds")
+
+# Outputs
+OUTPUT_DIR <- here("output", "5.figure_preparation", "Figure_3")
+
+dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
+```
+
+### --- Load Seurat ---
+```{r}
+s.object <- readRDS(SEURAT_INPUT)
+```
+
+# --- Heatmap White Adipocytes DEG by depot ---
+```{r plot-heatmap}
+# Load heatmap input list (.rds) generated on #X.03.X_Heatmap_Processing.Rmd
+pheatmap_data_all_deg <- readRDS(HEATMAP_INPUT_RDS)
+
+# Remove unwanted annotations
+pheatmap_data_all_deg$ann_df.sub <- pheatmap_data_all_deg$ann_df.sub |> select(-`Sample ID`)
+
+# Save pheatmap as pdf specific size and font
+
+multiplier <- 3
+pdf(file.path(OUTPUT_DIR, "3A_heatmap_deg_wad.pdf"), width = mm_to_in(50 * multiplier), height = mm_to_in(180 * multiplier))
+
+
+
+new_order <- c(
+  grep("White Adipocytes_Superficial", colnames(pheatmap_data_all_deg$plot.data)),
+  grep("White Adipocytes_Deep", colnames(pheatmap_data_all_deg$plot.data)),
+  grep("Brown", colnames(pheatmap_data_all_deg$plot.data))
+)
+
+pheatmap::pheatmap(
+  mat = log1p(pheatmap_data_all_deg$plot.data[, new_order]),
+  col = rev(RColorBrewer::brewer.pal(11, "RdBu")),
+  annotation_col = pheatmap_data_all_deg$ann_df.sub,
+  annotation_colors = pheatmap_data_all_deg$ann_colors,
+  legend_width = 10, legend = F,
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  show_colnames = FALSE,
+  show_rownames = FALSE,
+  scale = "row",
+  gaps_col = c(14,25),
+  gaps_row = pheatmap_data_all_deg$gaps_row,
+  fontsize = 6 * multiplier, # Default font size
+  fontsize_row = 6 * multiplier, # Row labels
+  fontsize_col = 6 * multiplier # Column labels
+)
+dev.off()
+
+colnames(pheatmap_data_all_deg$plot.data)
+
+pheatmap_data_all_deg$ann_df.sub |> count(Cell, `Neck region`)
+```
+
+
+# --- Pseudobulk DESeq2 ---
+## --- Read DESeq2 DE data.frame ---
+```{r read-deseq-df, fig.width= 1.77, fig.height= 1.42}
+final_DE <- read.csv(DESEQ_STATS_CSV)
+
+final_DE_filt <- final_DE %>% dplyr::filter(padj <= 0.05, contrast.2 != "Intermediate", contrast.1 != "Intermediate")
+
+
+# This adds a categorisation based on whether the log2FoldChange is up or down
+final_DE_filt$direction <- ifelse(final_DE_filt$log2FoldChange > 0, "Up in Deep", "Up in Superficial")
+
+final_DE_filt %>%
+  filter(cell_type == "White Adipocytes") %>%
+  count(direction)
+```
+## --- Volcano Plot DEG in White Adipocytes ---
+### --- Set up function ---
+```{r}
+library(ggrepel)
+
+PlotVolcano <- function(de_table, cluster, cont.1 = "Deep", cont.2 = "Superficial",
+                        fc_cutoff = 1.5, p_cutoff = 0.05, show_genes = NULL,
+                        n_top_show = 40, label_size = 6) {
+  res <- de_table %>% dplyr::filter(cell_type == cluster)
+  sub_res <- res %>% dplyr::filter(contrast.1 == cont.1, contrast.2 == cont.2)
+
+  larger_cont_name <- max(nchar(cont.1), nchar(cont.2))
+  contrast_name <- paste0(cluster, ": ", cont.1, " vs ", cont.2)
+  axis_cont.1 <- sprintf("%-*s", larger_cont_name, as.character(cont.1))
+  axis_cont.2 <- sprintf("%-*s", larger_cont_name, as.character(cont.2))
+
+  volcano_df <- sub_res %>%
+    dplyr::mutate(
+      neg_log10_p = -log10(padj),
+      direction = dplyr::case_when(
+        padj < p_cutoff & log2FoldChange >= fc_cutoff ~ "Up in Deep",
+        padj < p_cutoff & log2FoldChange <= -fc_cutoff ~ "Up in Superficial",
+        TRUE ~ "Not Significant"
+      )
+    )
+
+  maxFC <- max(abs(volcano_df$log2FoldChange), na.rm = TRUE)
+  maxY <- max(volcano_df$neg_log10_p, na.rm = TRUE)
+
+  top_genes <- volcano_df %>%
+    dplyr::filter(direction != "Not Significant") %>%
+    dplyr::arrange(pvalue) %>%
+    dplyr::slice_head(n = n_top_show) %>%
+    dplyr::pull(gene)
+
+  label_genes <- unique(c(show_genes, top_genes))
+
+  volcano_df <- volcano_df %>%
+    dplyr::mutate(label = dplyr::if_else(gene %in% label_genes, as.character(gene), NA_character_))
+
+  volcano_df$direction <- factor(
+    volcano_df$direction,
+    levels = c("Up in Superficial", "Not Significant", "Up in Deep")
+  )
+
+  gg_volcano <- ggplot(volcano_df, aes(x = log2FoldChange, y = neg_log10_p)) +
+    geom_vline(
+      xintercept = c(-fc_cutoff, 0, fc_cutoff),
+      linetype = "dashed", color = "black", linewidth = 0.1
+    ) +
+    geom_hline(
+      yintercept = -log10(p_cutoff),
+      linetype = "dashed", color = "black", linewidth = 0.1
+    ) +
+
+    # Solid points, no outline, smaller size
+    geom_point(aes(color = direction), shape = 16, size = 0.7, alpha = 0.15) +
+    geom_point(
+  data = volcano_df %>% dplyr::filter(gene %in% label_genes),
+  aes(x = log2FoldChange, y = neg_log10_p, fill = direction),
+  shape = 21,
+  size = 0.9,
+  stroke = 0.2,
+  color = "black",
+  alpha = 1,
+  inherit.aes = FALSE
+) + 
+    scale_color_manual(values = c(
+      "Up in Superficial" = neck.color[["Superficial"]],
+      "Up in Deep"        = neck.color[["Deep"]],
+      "Not Significant"   = "grey70"
+    )) +
+scale_fill_manual(values = c(
+  "Up in Superficial" = colorspace::darken(neck.color[["Superficial"]], amount = 0.15),
+  "Up in Deep"        = colorspace::darken(neck.color[["Deep"]], amount = 0.15),
+  "Not Significant"   = "grey60"
+)) + 
+    labs(
+      title = "Cervical Depot DGE",
+      subtitle = cluster,
+      x = paste0("Log2 fold-change"),
+      y = "-log10(adjusted p-value)",
+      color = NULL
+    ) +
+    theme(
+      legend.position = "top",
+      plot.subtitle = element_text(hjust = 0.5)
+    ) +
+    scale_x_continuous(limits = c(-maxFC, maxFC)) +
+    scale_y_continuous(limits = c(0, maxY * 1.05))
+
+  gg_volcano <- gg_volcano +
+
+    # Add a text
+    geom_text_repel(
+      aes(label = label),
+      max.overlaps = Inf,
+      size = label_size / .pt,
+      box.padding = 0.4,
+      point.padding = 0.25,
+      segment.color = "black",
+      segment.size = 0.3,
+      min.segment.length = 0,
+      na.rm = TRUE
+    ) +
+
+    # Corner annotations with neck colors
+    annotate(
+      "text",
+      x = -Inf, y = Inf, label = "Up in Superficial",
+      hjust = -0.05, vjust = 1.2, color = neck.color["Superficial"], size = 5 / .pt
+    ) +
+    annotate(
+      "text",
+      x = Inf, y = Inf, label = "Up in Deep",
+      hjust = 1.05, vjust = 1.2, color = neck.color["Deep"], size = 5 / .pt
+    )
+
+  gg_volcano
+}
+```
+
+### --- Plot B: Volcano plot ---
+```{r plot-volcano, fig.width= 1.968504, fig.height= 1.968504}
+mm_to_in(c(50, 50))
+
+# Choose genes to plot
+deep_genes <- c("PDE1A", "PDE4D", "PDE3A", "EBF2", "PRDM16", "UCP1", "PPARGC1A", "MECOM")
+sup_genes <- c("HSPA1A", "CRYAB", "ADAMTS4", "MMP17")
+
+# Plot
+gg_volcano <- PlotVolcano(de_table = final_DE, cluster = "White Adipocytes", show_genes = c(deep_genes, sup_genes), n_top_show = 0, cont.1 = "Deep", cont.2 = "Superficial", label_size = 5, fc_cutoff = 0.5) + theme_nature_metabolism() + theme(plot.subtitle = element_text(hjust = 0.5)) + NoLegend()
+# gg_volcano <- gg_volcano + plot_annotation(tag_levels = list("b")) & theme(plot.tag = element_text(face = "bold", size = 6 * 1.3))
+gg_volcano
+
+# Save as png
+ggsave(file.path(OUTPUT_DIR, "3B_Volcano.pdf"), gg_volcano, width = 50, height = 50, units = "mm", bg = "white",  dpi = 600)
+```
+
+
+
+## --- Plot Supp B: Volcano Plot DEG in ASPCs ---
+```{r, fig.width=2.36, fig.height=1.77}
+gg_volcano_aspc <- PlotVolcano(de_table = final_DE, cluster = "Adipocyte Progenitor Cells", n_top_show = 40, cont.1 = "Deep", cont.2 = "Superficial") + theme_nature_metabolism() + theme(plot.subtitle = element_text(hjust = 0.5)) + NoLegend() +
+  plot_annotation(tag_level = list("Supp B"))
+
+gg_volcano_aspc
+
+# Save as pdf
+ggsave(file.path(OUTPUT_DIR, "S3B_volcano_aspc.pdf"), gg_volcano_aspc, width = 70, height = 225 / 4, units = "mm", bg = "white",  dpi = 600)
+```
+# --- GSEA ---
+## --- Load the data ---
+```{r}
+gsea_hallmark <- read.csv(file = GSEA_HALLMARK)
+gsea_GO_BP <- read.csv(file = GSEA_GO)
+gsea_Rctm <- read.csv(file = GSEA_REACTOME)
+```
+
+## --- Set up plotting function---
+```{r}
+GeneRatioDotPlot <- function(gsea_res, wrap = 80, text_size = 8, left_margin = 10, padj_cutoff = 0.1, size_by = "gene count", slice_top = FALSE, top_n = 5) {
+  df <- as.data.frame(gsea_res)
+
+  df <- df %>%
+    mutate(
+      gene_count = str_count(core_enrichment, pattern = "/") + 1,
+      gene_ratio = gene_count / setSize,
+      Description = str_replace_all(Description, "_", " "),
+      Description = str_wrap(as.character(Description), width = wrap),
+      Description = str_remove(Description, "GOBP |REACTOME "),
+      direction = case_when(NES > 0 ~ "Superficial Enriched", NES < 0 ~ "Deep Enriched")
+    ) %>%
+    filter(p.adjust <= padj_cutoff)
+
+  if (slice_top) {
+    df <- df %>%
+      group_by(direction) %>%
+      arrange(p.adjust) %>%
+      slice_head(n = top_n) %>%
+      ungroup()
+  }
+
+  # Ensure factor levels are ordered per direction
+  df <- df %>%
+    group_by(direction) %>%
+    mutate(Description = str_to_title(Description)) %>%
+    mutate(Description = factor(Description, levels = unique(Description))) %>%
+    ungroup()
+
+  p <- ggplot(df, aes(x = gene_ratio, y = Description)) +
+    geom_point(aes(fill = p.adjust, size = gene_count), shape = 21, color = "black") +
+    scale_fill_viridis_c(option = "inferno", direction = -1, name = "p.adjust") +
+    scale_size(range = c(1, 2), name = size_by) +
+    facet_wrap(~direction, scales = "free_y") +
+    theme_nature_metabolism() +
+    theme(
+      legend.position = "right",
+      panel.grid.major = element_line(color = "grey80"),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.3),
+      strip.background = element_blank(), # <- removes grey background
+      strip.text = element_text(face = "bold", size = text_size),
+      axis.text.y = element_text(size = text_size, hjust = 1),
+      axis.title.y = element_blank()
+    ) +
+    scale_y_discrete(limits = rev) +
+    labs(x = "Gene Ratio", title = "GSEA Dotplot by Regulation Direction")
+
+  return(p)
+}
+```
+
+## --- Plot C: Gene Ontology BP ---
+```{r}
+GOBPDotPlot <- function(gsea_res, wrap = 80, text_size = 8, left_margin = 10, padj_cutoff = 0.1, size_by = "Gene ratio", slice_top = FALSE, top_n = 5) {
+  df <- as.data.frame(gsea_res)
+
+  df <- df %>%
+    mutate(
+      NES = NES,
+      gene_count = str_count(core_enrichment, pattern = "/") + 1,
+      gene_ratio = gene_count / setSize,
+      Description = str_replace_all(Description, "_", " "),
+      Description = str_wrap(as.character(Description), width = wrap),
+      Description = str_remove(Description, "GOBP |REACTOME "),
+      direction = case_when(NES > 0 ~ "Superficial Enriched", NES < 0 ~ "Deep Enriched")
+    ) %>%
+    filter(p.adjust <= padj_cutoff)
+
+  if (slice_top) {
+    df <- df %>%
+      group_by(direction) %>%
+      arrange(p.adjust) %>%
+      slice_head(n = top_n) %>%
+      ungroup()
+  }
+
+  # Ensure factor levels are ordered per direction
+  df <- df %>%
+    group_by(direction) %>%
+    mutate(Description = str_to_title(Description)) %>%
+    mutate(Description = factor(Description, levels = unique(Description))) %>%
+    ungroup()
+
+  p <- ggplot(df, aes(x = -log10(p.adjust), y = Description)) +
+    geom_point(aes(fill = NES, size = gene_ratio), shape = 21, color = "black") +
+    scale_fill_gradient2(name = "NES") +
+    scale_size(range = c(1, 2), name = size_by, limits = c(0, 0.6), breaks = c(0, 0.3, 0.6), ) +
+    scale_y_discrete(limits = rev) +
+    facet_wrap(~direction, scales = "free_y") +
+    theme_nature_metabolism() +
+theme(
+  legend.position = "right",
+  panel.grid.major = element_line(color = "grey80"),
+  panel.border = element_rect(color = "black", fill = NA, linewidth = 0.3),
+  strip.background = element_blank(),
+  strip.text = element_text(face = "bold", size = text_size),
+  axis.text.y = element_text(size = text_size, hjust = 1),
+  axis.title.y = element_blank(),
+  plot.margin = margin(t = 5.5, r = 5.5, b = 5.5, l = left_margin)
+) +
+    labs(x = "-log10(p.adjusted)", title = "GSEA Dotplot by Regulation Direction")
+
+  return(p)
+}
+```
+
+
+```{r, fig.width=4.724409 , fig.height=1.968504}
+mm_to_in(c(130, 50))
+gg_gsea_gobp <- GOBPDotPlot(gsea_GO_BP, padj_cutoff = 0.1, wrap = 30, slice_top = TRUE, top_n = 8, text_size = 5, left_margin = 5.5) +
+  labs(title = "GO - Biological Process\nWhite Adipocytes") 
+
+
+gg_gsea_gobp 
+
+# Save the file
+ggsave(file.path(OUTPUT_DIR, "3C_dotplot_gsea_go_bp_nes.pdf"), gg_gsea_gobp, width = 130, height = 50, units = "mm", bg = "white",  dpi = 600)
+```
+
+# --- CellChat ---
+## --- Load the objects and create CC object
+```{r}
+# --- Load the cellchat objects
+deep_cellchat <- readRDS(CELLCHAT_DEEP)
+superficial_cellchat <- readRDS(CELLCHAT_SUPERFICIAL)
+cellchat_merged <- readRDS(CELLCHAT_MERGED)
+```
+
+## --- Create object_list
+```{r}
+object_list <- list(Deep = deep_cellchat, Superficial = superficial_cellchat)
+```
+
+
+## --- Extract signaling information
+```{r}
+# Extract signaling information
+df.sup <- as.data.frame(subsetCommunication(superficial_cellchat, thresh = 1))
+df.deep <- as.data.frame(subsetCommunication(deep_cellchat, thresh = 1))
+
+# Merge and filter significant
+df.merge <- rbind(
+  df.sup |> mutate(depot = "Superficial"),
+  df.deep |> mutate(depot = "Deep")
+) |>
+  filter(pval <= 0.05)  
+
+annotation_order <- df.merge |> count(annotation) |> arrange(-n) |> pull(annotation)
+df.merge <- df.merge |> mutate(annotation = factor(annotation, levels = annotation_order))
+```
+
+# --- Plotting
+## --- Plot Supp C: CELLCHAT - Number of interactions per depot
+```{r, fig.width= 1.968504, fig.height= 1.417323, warning=FALSE}
+# Main Communication types
+pd <- position_dodge(width = 0.9)
+
+gg_comm_bar <- ggplot(df.merge, aes(x = annotation, fill = depot)) +
+  geom_bar(position = pd) +
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count), group = depot),
+    position = pd,
+    vjust = -0.15,
+    size = 5 / .pt
+  ) +
+  labs(
+    x = "Signaling Type", y = str_wrap("Number of inferred interactions", 25), fill = "Depot",
+    title = "Communication Types"
+  ) +
+  theme_nature_metabolism() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = neck.color) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.20)))
+
+
+# Main Communication types to Wads
+gg_comm_to_wad <- ggplot(df.merge |> filter(target == "WAds"), aes(x = annotation, fill = depot)) +
+  geom_bar(position = pd) +
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count), group = depot),
+    position = pd,
+    vjust = -0.15,
+    size = 5 / .pt
+  ) +
+  labs(x = "Signaling Type", y = str_wrap("Number of inferred interactions", 35), fill = "Depot", title = "Communication Types", subtitle = "White Adipocytes as Target") +
+  theme_nature_metabolism() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = neck.color) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.15)))
+```
+
+
+```{r, fig.width= 1.968504, fig.height= 1.224409, warning=FALSE}
+mm_to_in(c(50, 31.1))
+gg_comm_bar <- gg_comm_bar +
+  # plot_annotation(tag_levels = list("d")) + theme(plot.tag = element_text(face = "bold", size = 6)) +
+  # NoLegend() +
+  theme(axis.title.x = element_blank())
+gg_comm_bar
+
+ggsave(file.path(OUTPUT_DIR, "3Z_barplot_communication_types.pdf"), plot = gg_comm_bar, width = 50, height = 31.1, units = "mm", dpi = 600, bg = "white")
+```
+
+
+```{r, fig.width= 1.574803, fig.height= 1.771654, warning=FALSE}
+mm_to_in(c(40,45))
+gg_comm_to_wad
+ggsave(file.path(OUTPUT_DIR, "3Z_barplot_communication_types_to_wads.pdf"), plot = gg_comm_to_wad, width = 40, height = 45, units = "mm", dpi = 600, bg = "white")
+```
+
+
+## --- Communication flow analysis ---
+```{r, fig.width=1.574803, fig.height=1.417323, warning=FALSE}
+mm_to_in(c(40, 36))
+
+# Helper function to plot only one signaling type consistently
+customRankNet <- function(cellchat = cellchat_merge, ccht_comm_prob_df = df.merge, comm_type){  
+  pathway.show <- ccht_comm_prob_df |>
+    filter(annotation == comm_type) |>
+    pull(pathway_name)
+  rankNet(cellchat_merged, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = "WAds", stacked = T, do.stat = TRUE, color.use = neck.color, signaling = pathway.show) + theme_nature_metabolism() + theme(legend.position = "top") +
+    labs(title = comm_type, subtitle = "WAds as Receivers") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+
+```{r, fig.width=1.614173, fig.height=1.771654, warning=FALSE}
+mm_to_in(c(41,45))
+customRankNet(cellchat_merge, df.merge, comm_type = "Secreted Signaling")
+ggsave(file.path(OUTPUT_DIR, paste0("3Z_communication_flow_to_wads_", "Secreted Signaling", ".pdf")), width = 41, height = 45, units = "mm", dpi = 600, bg = "white")
+```
+
+```{r, fig.width=1.574803, fig.height=1.574803, warning=FALSE}
+mm_to_in(c(40,40))
+customRankNet(cellchat_merge, df.merge, comm_type = "ECM-Receptor")
+ggsave(file.path(OUTPUT_DIR, paste0("3Z_communication_flow_to_wads_", "ECM-Receptor", ".pdf")), width = 40, height = 40, units = "mm", dpi = 600, bg = "white")
+
+customRankNet(cellchat_merge, df.merge, comm_type = "Cell-Cell Contact")
+ggsave(file.path(OUTPUT_DIR, paste0("3Z_communication_flow_to_wads_", "Cell-Cell Contact", ".pdf")), width = 40, height = 40, units = "mm", dpi = 600, bg = "white")
+
+```
+
+
+## --- 2D communication plot ---
+```{r, warning=FALSE}
+library(ggrepel)
+# I have confirmed that the interaction strength is simply the sum of the communication probability within all the significant pathwys
+# We can thus create our own plot
+
+## Initialize empty list
+gg_2d <- list()
+
+# Start loop to plot for each signaling type
+for (comm_type in unique(df.merge$annotation)) {
+  df.filter <- df.merge |> filter(annotation == comm_type)
+
+  # Calculate strength
+  ## Output signal strength
+  out_strength_df <- df.filter |>
+    group_by(source, depot) |>
+    summarise(out_prob = sum(prob)) |>
+    rename("cell" = "source")
+
+  ## Input signal strength
+  in_strength_df <- df.filter |>
+    group_by(target, depot) |>
+    summarise(in_prob = sum(prob)) |>
+    rename("cell" = "target")
+
+  # Communication count per cell (counts rows where cell appears as source or target).
+  communication_count_df <- df.filter %>%
+    mutate(target = ifelse(source == target, "", target)) %>% # Remove cell if autocrine to count autocrine just once
+    select(depot, source, target) %>%
+    pivot_longer(cols = c(source, target), values_to = "cell") %>%
+    count(depot, cell, name = "comm_count")
+
+  # Merge data frames
+  strengt_df <- left_join(out_strength_df, in_strength_df, by = c("cell", "depot"))
+
+  strengt_df <- strengt_df %>%
+    left_join(communication_count_df, by = c("depot", "cell")) %>%
+    mutate(
+      comm_count = coalesce(comm_count, 0L),
+      cell_label = cell
+    )
+  
+  # Map names
+  meta_lookup <- s.object@meta.data |>
+    dplyr::select(cell_type, cell_type_short) |>
+    dplyr::distinct(cell_type, .keep_all = TRUE) |>
+    mutate(cell_type_short = as.character(cell_type_short))
+  strengt_df <- dplyr::left_join(strengt_df, meta_lookup, by = c("cell" = "cell_type_short"))
+
+  # Filter cells of interest
+  if (comm_type == "Secreted Signaling") {
+    strengt_df <- strengt_df |> mutate(cell_label = case_when(cell_type %in% c(
+      "White Adipocytes",
+      "Brown Adipocytes",
+      "Lymphatic Endothelial Cells",
+      "Schwann Cells"
+    ) ~ cell, TRUE ~ NA))
+  } else if (comm_type == "ECM-Receptor") {
+    strengt_df <- strengt_df |> mutate(cell_label = case_when(cell_type %in% c(
+      "White Adipocytes",
+      "Brown Adipocytes",
+      "Adipocyte Progenitor Cells",
+      "Smooth Muscle Cells",
+      "Pericytes",
+      "Endothelial Cells",
+      "Lymphatic Endothelial Cells",
+      "Schwann Cells"
+    ) ~ cell, TRUE ~ NA))
+  } else if (comm_type == "Cell-Cell Contact") {
+    strengt_df <- strengt_df |> mutate(cell_label = case_when(cell_type %in% c(
+      "White Adipocytes",
+      "B Lymphocytes",
+      "Macrophages",
+      "Mast Cells",
+      "Neutrophils",
+      "T Lymphocytes",
+      "Endothelial Cells",
+      "Lymphatic Endothelial Cells",
+      "Schwann Cells"
+    ) ~ cell, TRUE ~ NA))
+  }
+
+
+  sup_max <- strengt_df %>%
+    ungroup() |>
+    dplyr::filter(depot == "Superficial") %>%
+    dplyr::summarise(
+      x = max(out_prob, na.rm = TRUE) * 1.05,
+      y = max(in_prob, na.rm = TRUE) * 1.05
+    )
+
+  # Plot 2D plot
+
+  gg_2d[[comm_type]] <- ggplot(strengt_df, aes(x = out_prob, y = in_prob)) +
+    geom_rect(
+      data = sup_max,
+      aes(xmin = -Inf, ymin = -Inf, xmax = x * 1.15, ymax = y * 1.15),
+      inherit.aes = FALSE,
+      fill = "grey90",
+      alpha = 0.3,
+      color = "black",
+      linewidth = 0.2
+    ) +
+    geom_point(aes(fill = cell, size = comm_count), shape = 21, color = "black", alpha = 0.75) +
+    geom_text_repel(
+      aes(label = cell_label, color = cell),
+      size = 5 / .pt,
+      max.overlaps = Inf,
+      box.padding = 0.35,
+      point.padding = 0.2,
+      show.legend = FALSE, face = "bold"
+    ) +
+    facet_wrap(~depot) +
+    scale_fill_manual(values = palette.use) +
+    scale_color_manual(values = palette.use) +
+    scale_size(range = c(1, 2))
+
+
+
+
+  gg_2d[[comm_type]] <- gg_2d[[comm_type]] +
+    theme_nature_metabolism() +
+    NoLegend() +
+    theme(
+      panel.grid.major.x = element_line(linewidth = 0.1, color = "grey90"),
+      panel.grid.major.y = element_line(linewidth = 0.1, color = "grey90"),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.4),
+      panel.spacing.x = unit(1.8, "mm"),
+      axis.line = element_blank()
+    ) +
+    scale_x_continuous(
+      expand = expansion(c(0.05, 0.15)),
+      labels = scales::label_number(accuracy = 0.1, trim = TRUE)
+    ) +
+    scale_y_continuous(expand = expansion(c(0.05, 0.20))) +
+    labs(
+      title = comm_type,
+      subtitle = "All to All",
+      y = "Incoming Signal Strength",
+      x = "Outgoing Signal Strength"
+    )
+
+  ggsave(file.path(OUTPUT_DIR, paste0("3Z_2d_communication_plots_", comm_type, ".pdf")), plot = gg_2d[[comm_type]], width = 55, height = 33, units = "mm", dpi = 600, bg = "white")
+  
+  if(comm_type == "Cell-Cell Contact"){
+      ggsave(file.path(OUTPUT_DIR, paste0("3Z_2d_communication_plots_", comm_type, ".pdf")), plot = gg_2d[[comm_type]], width = 55, height = 43, units = "mm", dpi = 600, bg = "white")
+  }
+}
+```
+
+
+```{r, fig.width= 2.165354, fig.height= 1.299213, warning=FALSE}
+mm_to_in(c(55, 33))
+gg_2d
+```
+
+## --- Plot Supp B: Stacked communications ---
+```{r, fig.width=1.771654, fig.height=4.429134}
+mm_to_in(c(45, 112.5))
+# Stacked flow ---
+gg_ccht_ranknet <- rankNet(cellchat_merged, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = "WAds", stacked = F, do.stat = TRUE, color.use = neck.color) +
+  theme_nature_metabolism() +
+  theme(legend.position = "top",
+        panel.border = element_rect(color = "black", fill = NA),
+) +
+  labs(
+    title = "CellChat\nInformation Flow",
+    subtitle = "WAds as Receivers"
+  )
+
+gg_ccht_ranknet
+
+# Save as png
+ggsave(file.path(OUTPUT_DIR, "S3B_cellchat_ranknet.pdf"), gg_ccht_ranknet, width = 45, height = 112.5, units = "mm", bg = "white",  dpi = 600)
+
+# Save as pdf
+pdf(file.path(OUTPUT_DIR, "S3B_cellchat_ranknet.pdf"), width = 45, height = 112.5)
+gg_ccht_ranknet
+dev.off()
+```
+
+## --- Plot E: CELLCHAT - Circle Plot of selected communications
+### --- Define color pallete 
+```{r}
+# Define the cells and filter the color pallete accordingly
+cells <- levels(object_list[[1]]@idents)
+color.use <- palette.use[cells]
+color.use <- color.use[!is.na(color.use)]
+color.use
+```
+
+```{r}
+meta <- s.object@meta.data
+
+celltype_map <- meta %>%
+  dplyr::select(cell_type, cell_type_short) %>%
+  dplyr::distinct(cell_type, .keep_all = TRUE) %>%
+  tibble::deframe()
+
+rename_celltypes <- function(x, map) {
+  x_clean <- stringr::str_remove(x, ".*~ ")
+  dplyr::coalesce(unname(map[x_clean]), x_clean)
+}
+
+cellchat_merged@idents["Macrophages"]
+
+
+for (pathways.show in c("COLLAGEN", "LAMININ", "CD99", "BMP", "PTPRM", "FGF", "MPZ")) {
+  # Setting up a loop to get around issues when a single depot has significant communication
+  weight.max <- 0
+  for (i in 1:length(object_list)) {
+    print(i)
+    tryCatch(
+      {
+        weight <- getMaxWeight(object_list[i], slot.name = c("netP"), attribute = pathways.show) # control the edge weights across different datasets
+        if (weight > weight.max) {
+          weight.max <- weight
+        }
+      },
+      error = function(e) {
+        message(sprintf("Error at index %d: %s", i, e$message))
+        # Continue to next iteration
+      }
+    )
+  }
+
+  # Plot in R
+  par(mfrow = c(1, 2), xpd = TRUE)
+  for (i in 1:length(object_list)) {
+    tryCatch(
+      {
+        netVisual_aggregate(object_list[[i]], signaling = pathways.show, layout = "circle", edge.weight.max = weight.max[1], edge.width.max = 10, signaling.name = paste(pathways.show, names(object_list)[i]), color.use = color.use)
+      },
+      error = function(e) {
+        print(e$message)
+      }
+    )
+  }
+
+  file_name <- paste0("3E_cellchat_", tolower(pathways.show), "_circleplot.pdf")
+  
+  # Adjust dimension per plot
+  if(pathways.show == "BMP"){
+    plot.width = 40
+    plot.heigth = 45
+  } else if (pathways.show == "COLLAGEN"){
+    plot.width = 70
+    plot.heigth = 33
+  } else {
+    plot.width = 50
+    plot.heigth = 40
+    }
+  # Save as pdf
+  ## Note: This needs to be further edited using softwares like Inkscape or Illustrator
+  pdf(file.path(OUTPUT_DIR, file_name), width = mm_to_in(plot.width*3), height = mm_to_in(plot.heigth*3))
+  par(mfrow = c(1, 2), xpd = TRUE)
+  for (i in 1:length(object_list)) {
+    tryCatch(
+      {
+        netVisual_aggregate(object_list[[i]], signaling = pathways.show, layout = "circle", edge.weight.max = weight.max[1], edge.width.max = 10, signaling.name = paste(pathways.show, names(object_list)[i]), color.use = color.use, )
+      },
+      error = function(e) {
+        print(e$message)
+      }
+    )
+  }
+
+  dev.off()
+  
+  if(pathways.show %in% c("COLLAGEN", "CD99")){
+      file_name <- paste0("3E_cellchat_", tolower(pathways.show), "_WAd_as_target_circleplot.pdf")
+      plot.width = 50
+      plot.heigth = 40
+
+
+      pdf(file.path(OUTPUT_DIR, file_name), width = mm_to_in(plot.width*3), height = mm_to_in(plot.heigth*3))
+  par(mfrow = c(1, 2), xpd = TRUE)
+  for (i in 1:length(object_list)) {
+    tryCatch(
+      {
+        netVisual_aggregate(object_list[[i]], signaling = pathways.show, layout = "circle", edge.weight.max = weight.max[1], edge.width.max = 10, signaling.name = paste(pathways.show, names(object_list)[i]), color.use = color.use, targets.use = "WAds")
+      },
+      error = function(e) {
+        print(e$message)
+      }
+    )
+  }
+
+  dev.off()
+  }
+}
+
+```
+
+### --- Plot F: Ligand-Receptor Violin Plots ---
+```{r}
+plot_list <- list()
+
+Idents(s.object) <- "neck_region"
+filtered_s.object <- subset(s.object, idents = c("Intermediate"), invert = TRUE)
+Idents(filtered_s.object) <- "cell_type"
+Idents(s.object) <- "cell_type"
+```
+
+
+```{r, fig.width=2.755906, fig.height=1.574803, warning=FALSE}
+mm_to_in(c(70, 40))
+Idents(filtered_s.object) <- "cell_type"
+gg_ccht_bmp_vln <- VlnPlot(filtered_s.object, features = c("BMP5", "BMP8B", "ACVR1", "ACVR2A", "BMPR2", "BMPR1A"), idents = c("Smooth Muscle Cells", "Schwann Cells", "White Adipocytes"), split.by = "neck_region", flip = T, stack = T, pt.size = 0) + 
+  scale_fill_manual(values = neck.color) + 
+  theme_nature_metabolism() + 
+  theme(axis.title = element_blank()) + 
+  theme(legend.position = "top") + 
+  # plot_annotation(tag_levels = list("f")) + theme(plot.tag = element_text(size = 6, face = "bold")) +
+  scale_x_discrete(limits = c("Smooth Muscle Cells", "Schwann Cells", "White Adipocytes"))
+
+
+gg_ccht_bmp_vln
+# Save as png
+ggsave(file.path(OUTPUT_DIR, "3F_cellchat_bmp_vln.pdf"), gg_ccht_bmp_vln, width = 70, height = 40, units = "mm", bg = "white",  dpi = 600)
+```
+```{r}
+vln_plot_n <- gg_ccht_bmp_vln$data |> count(feature, ident, split)
+vln_plot_n |> distinct(ident, split, n) |> arrange(n)
+```
+
+
+# --- MEBOCOST
+## Load communication table
+```{r}
+# Load the communication table
+mebocost_comm <- read.csv(MEBOCOST_COMM_CSV)
+
+mebocost_comm %>% distinct(Condition, Sender)
+
+# Filter for significant communications to White Adipocytes in Deep and Superficial
+mebocost_comm_filtered <- mebocost_comm %>%
+  rename("neck_region" = "Condition") %>%
+  mutate(
+    Sender = str_remove(Sender, "^.*~ "),
+    Receiver = str_remove(Receiver, "^.*~ ")
+  ) %>%
+  filter(
+    neck_region != "Intermediate",
+    permutation_test_fdr <= 0.05,
+    str_detect(Receiver, "White")
+  )
+```
+
+## --- Plot Supp E: the most frequent metabolites to White Adipocytes ---
+```{r}
+# Most frequent metabolite to White Adipocytes per depot
+graph.data <- mebocost_comm_filtered %>%
+  count(Metabolite_Name, neck_region) %>%
+  arrange(n) %>%
+  mutate(Metabolite_Name = factor(Metabolite_Name, levels = unique(Metabolite_Name)))
+graph.data
+
+# Plotting
+# Use position = position_dodge()
+gg_mebocost_top_metab <- ggplot(graph.data, aes(x = Metabolite_Name, y = n)) +
+  geom_col(aes(color = neck_region, fill = neck_region), position = position_dodge(0.8), width = 0.7) +
+  # scale_y_continuous(limits = c(0, max.y*1.05)) +
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(size = 10),
+    legend.position = "top"
+  ) +
+  scale_color_manual(values = neck.color) +
+  scale_fill_manual(values = neck.color) +
+  labs(
+    title = "Top metabolite signaling to White Adipocytes",
+    y = "Number of communications",
+    x = "Metabolite",
+    fill = "Neck region",
+    colour = "Neck region"
+  ) +
+  theme(plot.margin = unit(c(0, 0, 0, 0), units = "in"))
+
+gg_mebocost_top_metab <- gg_mebocost_top_metab + coord_flip()
+gg_mebocost_top_metab
+
+ggsave(filename = file.path(OUTPUT_DIR, "S3E_mebocost_top_wad_metabolites.pdf"), plot = gg_mebocost_top_metab,  width = 50, height = 90, units = "mm", dpi = 300)
+```
+# --- Plot Suppp F: DotPlot of metabolites to White Adipocytes ---
+```{r}
+# Annotate sender region and link metabolite and sensor for plotting
+graph.data <- mebocost_comm_filtered %>%
+  mutate(
+    Sender = paste0(Sender, " (", neck_region, ")"),
+    Metabolite_Name = paste(Metabolite_Name, Sensor, sep = "->")
+  ) |> 
+  filter(str_detect(Metabolite_Name, 
+                    paste0(c(
+                      # "Liothyronine",
+                      # "Thyroxine",
+                      "Dehydroepiandrosterone"
+                      ), collapse = "|")))
+
+# unique x-axis categories in order
+sender_levels <- levels(factor(graph.data$Sender))
+
+# Dataframe to add background boxes
+box_df <- data.frame(
+  Sender = sender_levels,
+  x_center = seq_along(sender_levels),
+  x_min = seq_along(sender_levels) - 0.5,
+  x_max = seq_along(sender_levels) + 0.5,
+  neck_region = graph.data$neck_region[match(sender_levels, graph.data$Sender)]
+)
+
+# Define the changing points by comparing left_shifted and right_shifted x_axist vector
+cell_type_from_sender <- sub(" \\(.*", "", sender_levels)
+change_points <- which(cell_type_from_sender[-1] != cell_type_from_sender[-length(cell_type_from_sender)]) + 0.5
+
+gg_mebocost_wad_comm_dotplot <- ggplot(graph.data, aes(x = Sender, y = Metabolite_Name)) +
+
+  geom_vline(
+    xintercept = change_points,
+    linetype = "dashed",
+    color = "black",
+    linewidth = 0.3,
+    alpha = 0.6
+  ) +
+
+  # --- Points ---
+  geom_point(aes(fill = log2(Norm_Commu_Score), size = log2(Norm_Commu_Score)), shape = 21) +
+  scale_fill_viridis_c(option = "H", name = "Communication\nScore (log2)") +
+
+  # --- Theming ---
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    legend.position = "right"
+  ) +
+  labs(
+    title = "MEBOCOST Communication Score",
+    subtitle = "White Adipocytes as Receivers",
+    y = NULL
+  )
+```
+
+### --- Adjust and save ---
+```{r, fig.width=3.543307, fig.height=1.574803}
+mm_to_in(c(90, 40))
+gg_mebocost_wad_comm_dotplot <- gg_mebocost_wad_comm_dotplot + theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1),
+                                                              panel.border = element_rect(color = "black", fill = NA),
+                                                            #  # legend.position = "none",
+                                                            #  # plot.title = element_blank(),
+                                                            #  # plot.subtitle = element_blank(),
+                                                            # plot.margin = margin(30, 1, 1, 1)
+                                                            )
+gg_mebocost_wad_comm_dotplot
+ggsave(filename = file.path(OUTPUT_DIR, "S3C_mebocost_white_adipocytes_comm_dotplot.pdf"), plot = gg_mebocost_wad_comm_dotplot,  width = 90, height = 40, units = "mm", dpi = 300)
+```
+## --- Plot G: Mebocost relative communication flow ---
+```{r, fig.width=2.440945, fig.height= 4.429134}
+# Calculate communication score by adding communication for each metabolite. by neck region
+relative_comm_flow <- mebocost_comm_filtered %>%
+  group_by(Metabolite_Name, neck_region) %>%
+  summarise(sum_commu_score = sum(Commu_Score)) %>%
+  group_by(Metabolite_Name) %>%
+  mutate(relative_score = round(sum_commu_score / sum(sum_commu_score), 3))
+
+# Order from most Deep enriched to most Superficial enriched
+order <- relative_comm_flow %>%
+  filter(str_detect(neck_region, "Deep")) %>%
+  arrange(relative_score) %>%
+  pull(Metabolite_Name)
+relative_comm_flow <- relative_comm_flow %>% mutate(Metabolite_Name = factor(Metabolite_Name, levels = order))
+
+# Plot stacked proportions
+gg_mebo_comm_flow_stacked <- ggplot(relative_comm_flow, aes(x = Metabolite_Name, y = relative_score)) +
+  geom_col(aes(fill = neck_region)) +
+  geom_hline(yintercept = .5, linetype = "dashed", color = "grey50") +
+  theme_nature_metabolism() +
+  scale_fill_manual(values = neck.color, name = NULL) +
+  labs(title = "Metabolite Signaling", subtitle = "WAd as Receiver", y = "Relative information flow", x = NULL) +
+  theme(legend.position = "top", 
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+```
+
+### --- Adjust and save ---
+```{r, fig.width=2.165354, fig.height= 2.318898}
+mm_to_in(c(55, 58.9))
+gg_mebo_comm_flow_stacked <- gg_mebo_comm_flow_stacked 
+
+gg_mebo_comm_flow_stacked
+
+ggsave(filename = file.path(OUTPUT_DIR, "3G_mebocost_wad_relative_information_flow_stacked.pdf"), plot = gg_mebo_comm_flow_stacked,  width = 55, height = 58.9, units = "mm", dpi = 300)
+```
+
+## --- Plot Supp D: Mebocost relative communication flow (Raw) ---
+```{r, fig.width=2.440945, fig.height= 4.429134}
+# Order from strongest communication
+order <- relative_comm_flow %>%
+  group_by(Metabolite_Name) |> 
+  summarise(comm_strengt_total = sum(sum_commu_score)) |> 
+  arrange(comm_strengt_total) |> 
+  pull(Metabolite_Name)
+
+relative_comm_flow <- relative_comm_flow %>% mutate(Metabolite_Name = factor(Metabolite_Name, levels = order))
+
+
+# Plot dodged raw communication scores
+gg_mebo_comm_flow_dodged <- ggplot(
+  relative_comm_flow |> mutate(Metabolite_Name = str_wrap(Metabolite_Name, width = 80)),
+  aes(x = Metabolite_Name, y = sum_commu_score)
+) +
+  geom_col(aes(fill = neck_region), position = position_dodge()) +
+  theme_nature_metabolism() +
+  scale_fill_manual(values = neck.color, name = NULL) +
+  labs(
+    title = "MEBOCOST\nInformation Flow",
+    subtitle = "WAds as Receivers",
+    y = "Information flow", x = NULL
+  ) +
+  scale_x_discrete(limits = str_wrap(order, width = 80)) +
+  theme(legend.position = "top") +
+  coord_flip(clip = "off")
+```
+
+### --- Adjust and save ---
+```{r, fig.width=1.574803, fig.height= 4.724409}
+mm_to_in(c(40, 120))
+gg_mebo_comm_flow_dodged <- gg_mebo_comm_flow_dodged + theme(axis.text.x = element_text(angle = 270, vjust = 0.5),
+                                                             axis.text.y = element_text(angle = 315, hjust = 1, vjust = 1),
+                                                              panel.border = element_rect(color = "black", fill = NA),
+                                                             legend.position = "none",
+                                                             plot.title = element_blank(),
+                                                             plot.subtitle = element_blank(),
+                                                            plot.margin = margin(30, 1, 1, 1)
+                                                            )
+gg_mebo_comm_flow_dodged
+
+ggsave(filename = file.path(OUTPUT_DIR, "S3D_mebocost_wad_information_flow_dodged.pdf"), plot = gg_mebo_comm_flow_dodged,  width = 40, height = 120, units = "mm", dpi = 300)
+```
+
+# --- Plot I: CirclePlot of Mebocost ---
+
+
+```{r, fig.width=2.165354, fig.height= 1.968504}
+meta <- s.object@meta.data
+
+celltype_map <- meta %>%
+  dplyr::select(cell_type, cell_type_short) %>%
+  dplyr::distinct(cell_type, .keep_all = TRUE) %>%
+  tibble::deframe()
+
+rename_celltypes <- function(x, map) {
+  x_clean <- stringr::str_remove(x, ".*~ ")
+  dplyr::coalesce(unname(map[x_clean]), x_clean)
+}
+
+plot_list <- list()
+
+for(metabolite_name in c("Dehydroepiandrosterone", "Liothyronine", "Thyroxine")){
+# --- Get global maximum edge weight across both depots ---
+max_edge <- mebocost_comm_filtered %>%
+  filter(
+    str_detect(Metabolite_Name, metabolite_name),
+    str_detect(neck_region, "Deep|Superficial"),
+    str_detect(Receiver, "White Adipo")
+  ) %>%
+  group_by(Sender, Receiver, Metabolite_Name, neck_region) %>%
+  summarise(edge_weight = sum(Commu_Score), .groups = "drop") %>%
+  pull(edge_weight) %>%
+  max()
+
+
+
+for (depot in c("Deep", "Superficial")) {
+  # Filter to create the edges
+  edges <- mebocost_comm_filtered %>%
+  filter(
+    str_detect(Metabolite_Name, metabolite_name),
+    str_detect(neck_region, depot),
+    str_detect(Receiver, "White Adipo")
+  ) %>%
+  group_by(Sender, Receiver, Metabolite_Name) %>%
+  summarise(edge_weight = sum(Commu_Score), .groups = "drop") %>%
+  mutate(
+    Sender = rename_celltypes(Sender, celltype_map),
+    Receiver = rename_celltypes(Receiver, celltype_map)
+  ) %>%
+  select(Sender, Receiver, edge_weight)
+
+  # Build graph with all nodes from unfiltered mebocost_comm
+all_nodes <- unique(c(mebocost_comm$Sender, mebocost_comm$Receiver))
+all_nodes <- rename_celltypes(all_nodes, celltype_map)
+
+nodes_df <- tibble(name = unique(all_nodes))
+
+  g <- graph_from_data_frame(edges, vertices = nodes_df, directed = TRUE)
+  g_tbl <- as_tbl_graph(g)
+
+  node_from <- g_tbl %>%
+    as_tibble() %>%
+    mutate(from = row_number())
+
+  new_g_tbl <- g_tbl %>%
+    activate(edges) %>%
+    left_join(node_from)
+
+  # filter palette
+  mebo.palette <- palette.use[nodes_df$name]
+  
+  # plot
+  mebo_graph <- ggraph(new_g_tbl, layout = "circle") +
+    geom_edge_arc(aes(color = name, width = edge_weight),
+      arrow = arrow(length = unit(2.5, "mm"), type = "closed"),
+      strength = 0.1, show.legend = FALSE
+    ) +
+    geom_edge_loop(aes(color = name, width = edge_weight),
+      arrow = arrow(length = unit(2.5, "mm"), type = "closed"),
+      strength = 0.8, show.legend = FALSE
+    ) +
+    geom_node_point(aes(fill = name), shape = 21, color = "black", size = 2) +
+    geom_node_text(aes(label = name), size = 6 *2/ .pt, repel = TRUE) +
+
+    # Use global max_edge for comparability
+    scale_edge_width(
+      range = c(0.1, 1.5),
+      limits = c(0, max_edge),
+      name = "Communication\nScore"
+    ) +
+
+    scale_edge_colour_manual(values = mebo.palette, guide = "none") +
+    scale_fill_manual(values = mebo.palette, guide = "none") +  
+    coord_equal(xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5), clip = "off") +
+    theme_void() +
+    # labs(title = paste("Dehydroepiandrosterone", depot, sep = "\n")) +
+    theme(plot.title = element_text(hjust = 0.5, size = 6 / .pt), plot.title.position = "plot") 
+
+  plot_list[[paste(metabolite_name, depot)]] <- mebo_graph
+  ggsave(file.path(OUTPUT_DIR, paste0("3I_mebocost_", tolower(metabolite_name), "_", depot, ".pdf")), mebo_graph, width = 25, height = 25, units = "mm", dpi = 600)
+}
+}
+```
+
+```{r}
+## Helper function
+make_balanced_label_df <- function(lay, label_radius = 1.22, y_pad = 0.92) {
+  
+  max_y <- label_radius * y_pad
+  
+  label_df <- lay %>%
+    dplyr::mutate(
+      side = dplyr::if_else(x >= 0, "right", "left")
+    ) %>%
+    dplyr::group_by(side) %>%
+    dplyr::arrange(dplyr::desc(y), .by_group = TRUE) %>%
+    dplyr::mutate(
+      y_lab = seq(from = max_y, to = -max_y, length.out = dplyr::n()),
+      x_lab = dplyr::if_else(
+        side == "right",
+        sqrt(pmax(label_radius^2 - y_lab^2, 0)),
+        -sqrt(pmax(label_radius^2 - y_lab^2, 0))
+      ),
+      hjust = dplyr::if_else(side == "right", 0, 1)
+    ) %>%
+    dplyr::ungroup()
+  
+  label_df
+}
+```
+
+```{r}
+meta <- s.object@meta.data
+
+celltype_map <- meta %>%
+  dplyr::select(cell_type, cell_type_short) %>%
+  dplyr::distinct(cell_type, .keep_all = TRUE) %>%
+  tibble::deframe()
+
+rename_celltypes <- function(x, map) {
+  x_clean <- stringr::str_remove(x, ".*~ ")
+  dplyr::coalesce(unname(map[x_clean]), x_clean)
+}
+
+plot_list <- list()
+
+for (metabolite_name in c("Dehydroepiandrosterone", "Liothyronine", "Thyroxine")) {
+
+  ## Global max edge weight across depots for this metabolite
+  max_edge <- mebocost_comm_filtered %>%
+    dplyr::filter(
+      stringr::str_detect(Metabolite_Name, metabolite_name),
+      stringr::str_detect(neck_region, "Deep|Superficial"),
+      stringr::str_detect(Receiver, "White Adipo")
+    ) %>%
+    dplyr::group_by(Sender, Receiver, Metabolite_Name, neck_region) %>%
+    dplyr::summarise(edge_weight = sum(Commu_Score), .groups = "drop") %>%
+    dplyr::pull(edge_weight) %>%
+    max(na.rm = TRUE)
+
+  for (depot in c("Deep", "Superficial")) {
+
+    ## Edges for this panel
+    edges <- mebocost_comm_filtered %>%
+      dplyr::filter(
+        stringr::str_detect(Metabolite_Name, metabolite_name),
+        stringr::str_detect(neck_region, depot),
+        stringr::str_detect(Receiver, "White Adipo")
+      ) %>%
+      dplyr::group_by(Sender, Receiver, Metabolite_Name) %>%
+      dplyr::summarise(edge_weight = sum(Commu_Score), .groups = "drop") %>%
+      dplyr::mutate(
+        Sender = rename_celltypes(Sender, celltype_map),
+        Receiver = rename_celltypes(Receiver, celltype_map)
+      ) %>%
+      dplyr::select(Sender, Receiver, edge_weight)
+    
+    edges <- mebocost_comm_filtered %>%
+  filter(
+    str_detect(Metabolite_Name, metabolite_name),
+    str_detect(neck_region, depot),
+    str_detect(Receiver, "White Adipo")
+  ) %>%
+  group_by(Sender, Receiver, Metabolite_Name) %>%
+  summarise(edge_weight = sum(Commu_Score), .groups = "drop") %>%
+  mutate(
+    Sender = rename_celltypes(Sender, celltype_map),
+    Receiver = rename_celltypes(Receiver, celltype_map)
+  ) %>%
+  select(Sender, Receiver, edge_weight) %>%
+  arrange(desc(edge_weight))
+
+    ## All nodes, consistently renamed
+    all_nodes <- unique(c(mebocost_comm$Sender, mebocost_comm$Receiver))
+    all_nodes <- rename_celltypes(all_nodes, celltype_map)
+
+    nodes_df <- tibble::tibble(name = unique(all_nodes))
+
+    ## Graph
+    g <- igraph::graph_from_data_frame(edges, vertices = nodes_df, directed = TRUE)
+    g_tbl <- tidygraph::as_tbl_graph(g)
+
+    node_from <- g_tbl %>%
+      tibble::as_tibble() %>%
+      dplyr::mutate(from = dplyr::row_number())
+
+    new_g_tbl <- g_tbl %>%
+      tidygraph::activate(edges) %>%
+      dplyr::left_join(node_from, by = "from")
+
+    ## Palette aligned to actual node order
+    mebo.palette <- palette.use[nodes_df$name]
+
+    ## Build layout once and extract coordinates
+    lay <- ggraph::create_layout(new_g_tbl, layout = "circle")
+
+    ## Fixed radial label placement
+    label_df <- make_balanced_label_df(lay, label_radius = 1.22, y_pad = 0.999)
+
+    ## Plot
+    mebo_graph <- ggraph::ggraph(lay) +
+      ggraph::geom_edge_arc(
+        aes(color = name, width = edge_weight),
+        strength = 0.1,
+        show.legend = FALSE
+      ) +
+      ggraph::geom_edge_loop(
+        aes(color = name, width = edge_weight),
+        strength = 0.8,
+        show.legend = FALSE
+      ) +
+      ggraph::geom_node_point(
+        aes(fill = name),
+        shape = 21,
+        color = "black",
+        size = 2
+      ) +
+      ggplot2::geom_text(
+        data = label_df,
+        mapping = ggplot2::aes(
+          x = x_lab,
+          y = y_lab,
+          label = name,
+          hjust = hjust
+        ),
+        size = 6 / .pt,
+        inherit.aes = FALSE
+      ) +
+      ggraph::scale_edge_width(
+        range = c(0.1, 1.5),
+        limits = c(0, max_edge),
+        name = "Communication\nScore"
+      ) +
+      ggraph::scale_edge_colour_manual(values = mebo.palette, guide = "none") +
+      ggplot2::scale_fill_manual(values = mebo.palette, guide = "none") +
+      coord_equal(
+        xlim = c(-1.55, 1.55),
+        ylim = c(-1.55, 1.55),
+        clip = "off"
+      ) + theme_void() + theme(
+  plot.margin = margin(1, 12, 1, 19))
+
+    plot_list[[paste(metabolite_name, depot)]] <- mebo_graph
+
+    ggplot2::ggsave(
+      filename = file.path(
+        OUTPUT_DIR,
+        paste0("3I_mebocost_", tolower(metabolite_name), "_", depot, ".pdf")
+      ),
+      plot = mebo_graph,
+      width = 40,
+      height = 40,
+      units = "mm",
+      dpi = 600
+    )
+  }
+}
+```
+
+
+```{r, fig.width=1.574803, fig.height= 1.574803}
+mm_to_in(40)
+plot_list
+```
+
+
+

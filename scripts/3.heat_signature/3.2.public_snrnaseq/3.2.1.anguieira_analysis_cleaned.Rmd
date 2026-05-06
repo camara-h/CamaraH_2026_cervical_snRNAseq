@@ -1,0 +1,146 @@
+---
+title: "Angueira analysis"
+author: "Henrique"
+date: "2025-11-17"
+output: html_document
+---
+
+# Introduction
+
+This notebook analyzes the Angueira dataset with two main goals:
+
+1. Relate HEAT signature scores to UCP1 expression in adipocytes.
+2. Recluster Angueira adipocytes and quantify the fraction of HEAT-positive
+   cells per adipocyte cluster.
+
+The retained outputs are:
+
+- `Angueira_HEATvUCP1.csv`
+- `AngueiraA_Dataset_adipo_recluster.rds`
+- `heat_pos_adipo_anguiera.csv`
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(tidyverse)
+library(Seurat)
+library(here)
+
+# -------------------------------------------------------------------------
+# Define inputs and outputs
+# -------------------------------------------------------------------------
+ANGUEIRA_RDS <- here(
+"output/4.downstream_pipelines/vision/data/cleaned_datasets_human/AngueiraA_Dataset.rds"
+)
+
+ANGUEIRA_VISION_SIGSCORE <- here(
+  "output/4.downstream_pipelines/vision/data/vision_signature_scores/AngueiraA_Dataset_VISION_sigScore.csv"
+)
+
+OUTPUT_DATA_DIR <- here("output/3.heat_signature/3.public_snrnaseq/data")
+OUTPUT_FIGURE_DIR <- here("output/3.heat_signature/3.public_snrnaseq/figures")
+CLEANED_DATASET_DIR <- here("output/1.processing/data/cleaned_objects")
+
+dir.create(OUTPUT_DATA_DIR, showWarnings = FALSE, recursive = TRUE)
+dir.create(OUTPUT_FIGURE_DIR, showWarnings = FALSE, recursive = TRUE)
+dir.create(CLEANED_DATASET_DIR, showWarnings = FALSE, recursive = TRUE)
+
+# -------------------------------------------------------------------------
+# Analysis settings
+# -------------------------------------------------------------------------
+wad_HEAT_percentile <- 0.989345 ## CONSIDERING READING IT FROM A GENERATED FILE
+```
+
+# Load dataset and signature scores
+
+```{r}
+s.object <- readRDS(ANGUEIRA_RDS)
+sigscores_df <- read.csv(ANGUEIRA_VISION_SIGSCORE)
+```
+
+# Relate HEAT signature score to UCP1 expression in adipocytes
+
+```{r}
+Idents(s.object) <- "cell_type"
+s.object.small <- subset(s.object, idents = "Adipocytes")
+
+ucp1_df <- FetchData(s.object.small, vars = "UCP1", layer = "data")
+
+ucp1_v_sigscores <- sigscores_df |>
+  filter(Hallmark == "HEAT") |>
+  left_join(ucp1_df |> rownames_to_column("barcode"), by = "barcode") |>
+  filter(cell_type == "Adipocytes")
+
+write_csv(
+  ucp1_v_sigscores,
+  file.path(OUTPUT_DATA_DIR, "Angueira_HEATvUCP1.csv")
+)
+```
+
+# Recluster adipocytes
+
+```{r}
+s.object.new <- subset(s.object, idents = "Adipocytes")
+
+s.object.new <- NormalizeData(object = s.object.new)
+s.object.new <- FindVariableFeatures(object = s.object.new)
+s.object.new <- ScaleData(object = s.object.new)
+s.object.new <- SCTransform(object = s.object.new)
+
+s.object.new <- RunPCA(object = s.object.new)
+s.object.new <- FindNeighbors(object = s.object.new, dims = 1:30)
+s.object.new <- FindClusters(
+  object = s.object.new,
+  resolution = 0.5,
+  cluster.name = "unintegrated_clusters"
+)
+s.object.new <- RunUMAP(object = s.object.new, dims = 1:30)
+```
+
+# Add HEAT score and define HEAT-positive cells
+
+```{r}
+meta <- s.object.new@meta.data
+
+if (!"sigScores" %in% colnames(meta)) {
+  meta <- meta |>
+    rownames_to_column("barcode") |>
+    left_join(
+      sigscores_df |>
+        filter(Hallmark == "HEAT") |>
+        select(barcode, HEAT = sigScores),
+      by = "barcode",
+      unmatched = "drop"
+    ) |>
+    column_to_rownames("barcode")
+}
+
+meta <- meta |>
+  mutate(heat_positive = HEAT >= wad_HEAT_percentile)
+
+s.object.new@meta.data <- meta
+```
+
+# Save reclustered Seurat object
+
+```{r}
+saveRDS(
+  s.object.new,
+  file.path(CLEANED_DATASET_DIR, "AngueiraA_Dataset_adipo_recluster.rds")
+)
+```
+
+# Count HEAT-positive adipocytes by cluster
+
+```{r}
+heat_pos_anguiera <- meta |>
+  group_by(unintegrated_clusters) |>
+  count(heat_positive) |>
+  mutate(heat_positive_pct = n / sum(n) * 100)
+
+write_csv(
+  heat_pos_anguiera,
+  file.path(OUTPUT_DATA_DIR, "heat_pos_adipo_anguiera.csv")
+)
+```

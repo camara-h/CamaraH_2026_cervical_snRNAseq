@@ -1,0 +1,453 @@
+---
+title: "Emont HEAT Signature"
+output: html_document
+date: "2024-12-02"
+---
+
+The first part of the script is to load the packages that we're going to use.
+
+```{r setup, include=FALSE}
+pacman::p_load(SingleCellExperiment,
+               metap,
+               tradeSeq,
+               Seurat,
+               tidyverse, 
+               Matrix,
+               scales,
+               cowplot,
+               viridis,
+               VISION)
+```
+
+The main purpose of this script is to see how the data from Efthymiou et al. (2025) compares to our Neck Adipose Tissue dataset. Here we'll use VISION to determine signature scores between clusters to see whether this HEAT signature is a good marker for thermogenic adipocytes broadly or whether it would be more specific to neck adipocytes.
+
+The first part of this script reads in the emont dataset and subsets the dataset to look specifically at adipocytes.
+
+```{r read-data}
+
+load("../Data/PublishedSingleCellDatasets/Efthymiou 2025/s_objectf1_080423.Rdata")
+
+```
+
+This particular dataset requires additional annotations added to the metadata. That is done here adding the cell type annotations and adding the depot classifications.
+
+```{r}
+
+s.objectf1$cluster <- NA
+
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="0")] <- "Adipo1"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="1")] <- "APC1"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="2")] <- "APC2"
+# s.objectf1$cluster[which(s.objectf1$seurat_clusters=="3")] <- "Unknown"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="4")] <- "Macro1"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="5")] <- "EndoVCs"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="6")] <- "MesoCs1"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="7")] <- "Adipo2"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="8")] <- "PRM1+ Cells"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="9")] <- "CNTNAP2+ Cells"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="10")] <- "EndoSCs"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="11")] <- "EndoACs"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="12")] <- "SMCs"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="13")] <- "Pericytes"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="14")] <- "APC3"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="15")] <- "T Cells"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="16")] <- "LECs1"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="17")] <- "Macro2"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="18")] <- "Adipo3"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="19")] <- "MesoCs2"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="20")] <- "MastCs"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="21")] <- "Macro3"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="22")] <- "B Cells"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="23")] <- "Schwann"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="24")] <- "Unknown"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="25")] <- "LECs2"
+s.objectf1$cluster[which(s.objectf1$seurat_clusters=="26")] <- "Erythroblasts"
+
+
+s.objectf1$depot <- NA
+
+s.objectf1$depot[which(s.objectf1$sample=="03_SQ")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="04_OM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="04_SQ")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="05_OM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="06_OM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="07_OM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="08_OM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="09_OM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="AOM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="BOM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="BSQ")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="OM_Exp1")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="SQ1")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="SQ2")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="SQ3")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="SQ4")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="SQ5")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="01_OM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="01_SQ")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="02_OM")] <- "IAT"
+s.objectf1$depot[which(s.objectf1$sample=="02_SQ")] <- "SAT"
+s.objectf1$depot[which(s.objectf1$sample=="03_OM")] <- "IAT"
+
+```
+
+```{r, fig.height = 12, fig.width = 12}
+
+efthymiou <- s.objectf1 
+rm(s.objectf1)
+
+Idents(efthymiou) = "cluster"
+UMAPPlot(efthymiou, label = TRUE) + NoLegend()
+
+features = c("ADIPOQ","PDGFRA", "DCN", "MYOCD", "ADGRF5", "JAM2", "STEAP4", "PKHD1L1", "CDH19", "MPZ",  "CARD11", "CD163", "CPA3", "CSF3R", "CNTNAP2", "MSLN", "PRLR", "NRXN1")
+
+VlnPlot(efthymiou, 
+        features = features, 
+        stack = TRUE, 
+        flip = TRUE, 
+        group.by = "cluster") + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm"))
+
+```
+
+The next part is to rescale the data in accordance to what is recommended for the VISION workflow. Here the data is put into a separate object that is normalised called "scaled_counts". The UMAP projections are put into an object called "projection" and the associated metadata is put into "meta".
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- efthymiou@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- efthymiou@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = efthymiou@meta.data
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+```{r}
+
+Signatures="../Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/17.Efthymiou_dataset_analysis/VISION_efthymiou_HEAT.rds")
+# vis <- readRDS(file = "../Output/17.Efthymiou_dataset_analysis/VISION_efthymiou_HEAT.rds")
+
+```
+
+From this vision analysis we create a new dataset called "graph.data" that is joining the UMAP embeddings witht he signature scores, the sample type (type of adipose tissue probed) and the cell type that was previously identified in the object. The graph produced below is
+
+```{r }
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+sampletype <- efthymiou$sample
+celltype <- efthymiou$cluster
+depot <- efthymiou$depot
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(sampletype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(depot) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+ gather(4:8, key = "Hallmark", value = "sigScores")
+
+```
+
+Panel with border and labels.
+
+```{r fig.height = 6, fig.width = 12}
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=umap_1, y=umap_2, color=sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(option = "plasma",
+                      limits = c(-0.3,2.6)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Efthymiou et al 2025",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA),
+    axis.text.y = element_text(size = 13),
+    axis.text.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    axis.title.x = element_text(size = 13)
+  ) 
+
+c <- DimPlot(efthymiou, reduction = "umap", group.by = "cluster", label = TRUE, repel = TRUE) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Efthymiou et al 2025",
+    color = "Signature Scores"
+  ) + 
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA),
+    axis.text.y = element_text(size = 13),
+    axis.text.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    axis.title.x = element_text(size = 13)
+  ) +
+  NoLegend()
+
+b + c
+
+```
+
+Panel with no borders or labels.
+
+```{r fig.height = 6, fig.width = 12}
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=umap_1, y=umap_2, color=sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_gradient(low = "#FFF5F0", high = "#CB181D") +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Efthymiou et al 2025",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) 
+
+c <- DimPlot(efthymiou, reduction = "umap", group.by = "cluster", label = TRUE, repel = TRUE) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Efthymiou et al 2025",
+    color = "Signature Scores"
+  ) + 
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) +
+  NoLegend()
+
+c + b
+
+```
+
+Following this, we get a graph where we plot the signature scores by the adipocyte subtype described in this paper.
+
+```{r}
+
+ggplot((graph.data %>% 
+         dplyr::filter(celltype %in% c("Adipo1", "Adipo2", "Adipo3")) %>% 
+         dplyr::filter(Hallmark == "HEAT")
+       ), aes(x = depot, y = sigScores, fill = celltype)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", vjust = -1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of Signature Scores by Cell Type" # Plot title
+  ) +
+  facet_grid(~Hallmark)
+
+```
+
+```{r}
+
+VlnPlot(subset(efthymiou, idents = c("Adipo1", "Adipo2")), 
+        features = c("PPARGC1A", "EBF2"),  
+        stack = TRUE, 
+        flip = TRUE)
+
+```
+
+```{r}
+
+mean.sig.scores <- graph.data %>% 
+  filter(celltype == "hAd6") %>% 
+  group_by(individual, Hallmark) %>%
+  summarise(meansigscore = mean(sigScores))
+  
+
+ggplot(mean.sig.scores, aes(x = individual, y = meansigscore, fill = individual)) +
+  geom_jitter(aes(color = individual), width = 0.2, alpha = 0.6, size = 0.8) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", vjust = -1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of Signature Scores by Cell Type" # Plot title
+  ) +
+  facet_grid(~Hallmark)
+
+
+```
+
+Finally, the below chunk exports this dataset as a csv file to be merged and used with other datasets.
+
+```{r}
+
+write.csv(graph.data, file = "../Output/17.Efthymiou_dataset_analysis/efthymiou_visionoutput.csv")
+```
+
+```{r}
+library(ggpubr)
+DimPlot(subset(efthymiou, idents = c("Adipo1", "Adipo2", "Adipo3")))
+
+ggplot(graph.data %>%
+         dplyr::filter(celltype %in% c("Adipo1", "Adipo2", "Adipo3")) %>% 
+         dplyr::filter(Hallmark == "HEAT"),
+       aes(x = sampletype,
+                  color = sampletype,
+                  y = sigScores)) +
+  geom_violin() +
+  geom_point() +
+  theme_pubr() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  NoLegend()
+
+```
+#---------------------
+# Calculating the percentage of NeuronAssociatedCells
+#------------------
+```{r}
+order_x_alphabetically <- function(p) {
+  # Extract the existing x variable
+  x_var <- rlang::get_expr(p$mapping$x)
+  
+  # Pull the x-axis values from the plot data
+  x_values <- p$data[[as.character(x_var)]]
+  
+  # Alphabetical order
+  new_limits <- sort(unique(as.character(x_values)))
+  
+  # Add reordered scale
+  p + scale_x_discrete(limits = new_limits)
+}
+
+#Checking the expression of the neuron associated markers
+p <- VlnPlot(efthymiou, features = c("NRXN1", "CNTNAP2", "CNTNAP5"), flip = T, stack = T, fill.by = "ident") + NoLegend()
+order_x_alphabetically(p)
+```
+The CNTANP2+ cells in Arionas dataset are not necessarily identical to ours, as this are NRXN1- and CNTNAP5-.
+
+```{r}
+#Percentage in the dataset as whole
+efthymiou@meta.data %>% count(cluster, depot) %>% mutate(cluster_pct = round(n/sum(n)*100,2)) %>% arrange(-n)
+
+#Percentage per depot
+efthymiou@meta.data %>% count(cluster, sample) %>% mutate(cluster_pct = round(n/sum(n)*100,2)) %>% filter(str_detect(cluster, "CNTNAP2")) %>% arrange(-n)
+
+#Percentage per sample
+efthymiou@meta.data %>% count(cluster, sample) %>% mutate(cluster_pct = round(n/sum(n)*100,2)) %>% filter(str_detect(cluster, "CNTNAP2")) %>% arrange(-n)
+
+#Percentage within sample
+cntnap_pct <- efthymiou@meta.data %>% count(cluster, sample, .drop = F) %>% group_by(sample) %>% mutate(cluster_pct = round(n/sum(n)*100,2)) %>%
+  filter(str_detect(cluster, "CNTNAP2")) %>%
+  arrange(-n)
+
+graph.data <- cntnap_pct %>% left_join(efthymiou@meta.data %>% select(sample, depot, ), by = "sample", multiple = "first")
+graph.data
+```
+```{r}
+#Plotting
+ggplot(graph.data, aes(x = depot, y = cluster_pct)) +
+  geom_point() +
+  geom_boxplot(aes(fill = depot), outliers = F) +
+  theme_pubr()
+
+ggsave("../Output/17.Efthymiou_dataset_analysis/CNTNAP2_pct_byDepot.png", width = 1, height = 1, scale = 4, units = "in", dpi = 400)
+```
+

@@ -1,0 +1,443 @@
+---
+title: "16.Huang_dataset_analysis"
+output: html_document
+date: "2024-12-03"
+---
+
+```{r setup, include=FALSE}
+
+pacman::p_load(dplyr,
+               Seurat,
+               patchwork,
+               VISION,
+               hdf5r)
+
+```
+
+This dataset was available as the original output file from CellRanger. For looking at this dataset we use a pretty standard workflow for performing filtering, for visualizing, and generally handling the scRNA-seq dataset. The next chunks perform the simple pipeline from Seurat.
+
+This part uploads the file and creates a Seurat object.
+
+```{r cars}
+
+huang.data <- Read10X_h5("../Data/PublishedDatasets/Huang 2022/filtered_feature_bc_matrix.h5")
+
+huang <- CreateSeuratObject(counts = huang.data, project = "huang", min.cells = 3, min.features = 200)
+
+```
+
+Next, the percentage of mitochondrial genes is pulled out and annotated in the metadata.
+
+``` {r}
+
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+huang[["percent.mt"]] <- PercentageFeatureSet(huang, pattern = "^MT-")
+
+```
+
+The features, counts, and percent mitochondrial gene expression is plotted. This is to get an understanding on teh quality of the cells sequenced - primarily if there is a high amount of mitochondrial RNA (associated with dying cells) and if there is a tight distribution of Features and Counts (reduces likelihood of doublets).
+
+``` {r}
+
+# Visualize QC metrics as a violin plot
+VlnPlot(huang, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+
+The number of RNA molecules is plotted against percentage mitochondrial genes and Features. The primary conclusion drawn is that the lower quality cells (high mitochondrial genes) has lower RNA counts.
+
+``` {r}
+
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- FeatureScatter(huang, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(huang, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+
+```
+
+The data is then filtered by relatively standard criteria.
+
+``` {r}
+
+huang <- subset(huang, subset = nFeature_RNA > 200 & nFeature_RNA < 6380 & percent.mt < 5)
+
+```
+
+The data is normalised.
+
+``` {r}
+
+huang <- NormalizeData(huang)
+
+```
+
+Next we find the most variable features that are later used for performing downstream dimensionality reduction steps.
+
+``` {r}
+
+huang <- FindVariableFeatures(huang, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(huang), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(huang)
+LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+```
+
+The data is then scaled and then PCA is performed. An elbow plot is used to determine how many of the PCs should be used for the next steps.
+
+``` {r}
+
+all.genes <- rownames(huang)
+huang <- ScaleData(huang, features = all.genes)
+huang <- RunPCA(huang, features = VariableFeatures(object = huang))
+DimPlot(huang, reduction = "pca") + NoLegend()
+ElbowPlot(huang)
+
+```
+
+Finally for the data processing pipeline, FindNeighbors, FindClusters and RunUMAP are run to generate a UMAP plot and to find the clusters in that UMAP.
+
+``` {r}
+
+huang <- FindNeighbors(huang, dims = 1:20)
+huang <- FindClusters(huang, resolution = 0.4)
+huang <- RunUMAP(huang, dims = 1:20)
+
+```
+
+The UMAP is displayed. Note that the plot looks a little different from the one published in Huang et al. 2022, some due to the fact that it is UMAP rather than tSNE but could also be due to differences in the data processing.
+
+``` {r}
+
+UMAPPlot(huang)
+
+```
+
+The markers used in the paper are plotted below in the Violin Plot.
+
+``` {r}
+
+# Cluster 0 - "ASPN"
+# Cluster 0 - "COL1A2"
+# Cluster 1 - "DLK1"
+# Cluster 1 - "CFD"
+# Cluster 2 - "APOC1"
+# Cluster 2 - "APOE"
+# Cluster 3 - "COL15A1"
+# Cluster 3 - "IGFBP5"
+# Cluster 4 - "ACTA2"
+# Cluster 4 - "TAGLN"
+# Cluster 5 - "CLDN5"
+# Cluster 5 - "RBP7"
+# Cluster 6 - "HIST1H4C"
+# Cluster 6 - "KIAA0101"
+# Cluster 7 - "NKG7"
+# Cluster 7 - "KLRB1"
+# Cluster 8 - "S100A8"
+# Cluster 8 - "S100A9"
+# Cluster 9 - "TFF3"
+# Cluster 9 - "CCL21"
+# Cluster 10 - "HBG2"
+# Cluster 10 - "HBG1"
+
+VlnPlot(huang, features = c("ASPN", "COL1A2",  "DLK1", "CFD", "APOC1", "APOE", "COL15A1", "IGFBP5", "ACTA2", "TAGLN"), 
+        stack = TRUE, 
+        flip = TRUE)
+
+VlnPlot(huang, features = c("CLDN5", "RBP7",  "HIST1H4C", "KIAA0101", "NKG7", "KLRB1"), 
+        stack = TRUE, 
+        flip = TRUE)
+
+VlnPlot(huang, features = c("S100A8", "S100A9",  "TFF3", "CCL21", "HBG2", "HBG1"), 
+        stack = TRUE, 
+        flip = TRUE)
+
+```
+
+Based on these markers, the object is re-annotated below. Clusters 10 and 12 aren't well described (12 is tiny, though) by the markers in the original paper. These markers seem pretty distinct based on the below FeaturePlots. 
+
+``` {r}
+
+#FindMarkers(huang, ident.1 = "12")
+#FindMarkers(huang, ident.1 = "10")
+
+# Cluster 10
+FeaturePlot(huang, features = "CD52")
+FeaturePlot(huang, features = "LTB")
+FeaturePlot(huang, features = "IL7R")
+FeaturePlot(huang, features = "CD3D")
+FeaturePlot(huang, features = "FYB")
+
+# Cluster 12
+FeaturePlot(huang, features = "TPSAB1")
+FeaturePlot(huang, features = "CPA3")
+FeaturePlot(huang, features = "HPGDS")
+FeaturePlot(huang, features = "CTSG")
+FeaturePlot(huang, features = "HDC")
+
+```
+
+Using CellxGene, it seems likely that these are some form of T cell (cluster 10) and mast cells (cluster 12). Since both are immune cell types, they aren't overly important to consider
+
+``` {r}
+
+metadata <- huang@meta.data
+
+metadata$cells <-rownames(metadata)
+
+metadata$cluster.ident <-NA
+
+metadata$cluster.ident[which(metadata$seurat_clusters=="0")] <- "Late Adipocyte Progenitors"
+metadata$cluster.ident[which(metadata$seurat_clusters=="1")] <- "Mid Adipocyte Progenitors"
+metadata$cluster.ident[which(metadata$seurat_clusters=="2")] <- "Early Adipocyte Progenitors"
+metadata$cluster.ident[which(metadata$seurat_clusters=="3")] <- "Endothelial Cells"
+metadata$cluster.ident[which(metadata$seurat_clusters=="4")] <- "Pericytes"
+metadata$cluster.ident[which(metadata$seurat_clusters=="5")] <- "Cycling Cells"
+metadata$cluster.ident[which(metadata$seurat_clusters=="6")] <- "Pericytes"
+metadata$cluster.ident[which(metadata$seurat_clusters=="8")] <- "NKT & T cells"
+metadata$cluster.ident[which(metadata$seurat_clusters=="7")] <- "Macrophages & B cells"
+metadata$cluster.ident[which(metadata$seurat_clusters=="9")] <- "Lymphatic endothelial cells"
+metadata$cluster.ident[which(metadata$seurat_clusters=="10")] <- "T cells"
+metadata$cluster.ident[which(metadata$seurat_clusters=="11")] <- "Red blood cells"
+metadata$cluster.ident[which(metadata$seurat_clusters=="12")] <- "Mast cells"
+
+huang@meta.data <- metadata
+
+```
+
+Below the UMAP is plotted with the above labels.
+
+``` {r}
+
+Idents(huang) = "cluster.ident"
+UMAPPlot(huang, label = TRUE)
+
+```
+
+# Adipocyte Progenitor Population
+
+Next we look at the adipocyte progenitor population. To start the data is subset just for those 3 cell types and then ordered based on their maturity (early then mid then late).
+
+``` {r}
+
+# Define the desired order of x-axis labels
+desired_order <- c("Early Adipocyte Progenitors", "Mid Adipocyte Progenitors", "Late Adipocyte Progenitors")
+
+# Set the levels of the cell identities to the desired order
+Idents(huang) = "cluster.ident"
+huang.adipo <- subset(huang, idents = desired_order)
+huang.adipo$cluster.ident <- factor(Idents(huang.adipo), levels = desired_order)
+
+```
+
+Then the genes that are used in the manuscript are plotted in this progenitor specific population. We can see those genes that mark the early cells, the more committed progenitors, and those that are to the point of preadipocytes.
+
+``` {r}
+
+# Early markers
+FeaturePlot(huang.adipo, features = c("MFAP4"))
+FeaturePlot(huang.adipo, features = c("FBN1"))
+FeaturePlot(huang.adipo, features = c("CILP"))
+
+# Middle markers
+FeaturePlot(huang.adipo, features = c("EBF2"))
+FeaturePlot(huang.adipo, features = c("PDGFRA"))
+
+# Late markers
+FeaturePlot(huang.adipo, features = c("FABP4"))
+FeaturePlot(huang.adipo, features = c("LPL"))
+FeaturePlot(huang.adipo, features = c("PLIN1"))
+
+```
+
+Next, we look at those genes in the heat signature and map them onto these progenitor populations. For the most part it doesn't look like there is a clear relationship and overall expression of most markers is relatively low.
+
+``` {r}
+
+FeaturePlot(huang.adipo, features = c("PNPLA4"))
+FeaturePlot(huang.adipo, features = c("SLC25A5"))
+FeaturePlot(huang.adipo, features = c("CA12"))
+FeaturePlot(huang.adipo, features = c("COQ9"))
+FeaturePlot(huang.adipo, features = c("DECR1"))
+FeaturePlot(huang.adipo, features = c("PPARGC1A"))
+FeaturePlot(huang.adipo, features = c("SLC25A11"))
+FeaturePlot(huang.adipo, features = c("SDHB"))
+FeaturePlot(huang.adipo, features = c("AGT"))
+FeaturePlot(huang.adipo, features = c("MRPS25"))
+FeaturePlot(huang.adipo, features = c("IVD"))
+FeaturePlot(huang.adipo, features = c("AFG3L2"))
+FeaturePlot(huang.adipo, features = c("CLSTN3"))
+FeaturePlot(huang.adipo, features = c("UQCRFS1"))
+FeaturePlot(huang.adipo, features = c("BDH1"))
+
+#. PNPLA4, SLC25A5, CA12, COQ9, DECR1, PPARGC1A, SLC25A11, SDHB, AGT, MRPS25, IVD, AFG3L2, CLSTN3, UQCRFS1, BDH1
+
+```
+
+To better visualize the above transition from early to later adipocyte progenitors, these markers are plotted on a VlnPlot.
+
+``` {r}
+
+# Just the earlier markers
+VlnPlot(huang.adipo, 
+        features = c("CILP","MFAP4","FBN1", "FSTL1"), 
+        stack = TRUE, 
+        flip = TRUE,
+        group.by = "cluster.ident")
+
+# Middle and late markers
+VlnPlot(huang.adipo, 
+        features = c("PPARGC1A", "EBF2", "PRDM16", "PDGFRA", "LPL", "FABP4"), 
+        stack = TRUE, 
+        flip = TRUE)
+
+# The early, middle, and late markers
+VlnPlot(huang.adipo, 
+        features = c("CILP","MFAP4","FBN1","EBF2", "PDGFRA", "FABP4", "LPL"), 
+        stack = TRUE, 
+        flip = TRUE,
+        group.by = "cluster.ident")
+
+```
+
+``` {r}
+
+FeaturePlot(huang.adipo, features = c("PAX3"))
+FeaturePlot(huang.adipo, features = c("HOXD3"))
+FeaturePlot(huang.adipo, features = c("HOXA3"))
+FeaturePlot(huang.adipo, features = c("HOXA5"))
+
+DotPlot(huang.adipo, features = c("PAX3", "HOXD3", "HOXA3", "HOXA5"))
+
+```
+
+## Vision Analysis
+
+This chunk turns the data into a form used by VISION for interpretting the data.
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- huang@assays$RNA$counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- huang@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = huang@meta.data
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+``` {r}
+
+Signatures="../Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/16.Huang_dataset_analysis/VISION_huang_HEAT.rds")
+# vis <- readRDS(file = "../Output/16.Huang_dataset_analysis/VISION_huang_HEAT.rds")
+
+```
+
+Next, the signature scores are pulled from the vision object as well as the UMAP projection for plotting the signature scores onto the UMAP.
+
+``` {r}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+celltype <- factor(huang$cluster.ident, levels = c("Early Adipocyte Progenitors", "Mid Adipocyte Progenitors", "Late Adipocyte Progenitors"))
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  filter(celltype %in% c("Early Adipocyte Progenitors", "Mid Adipocyte Progenitors", "Late Adipocyte Progenitors")) %>% 
+  gather(4:8, key = "Hallmark", value = "sigScores")
+
+ggplot(graph.data) + 
+  aes(x=umap_1, y=umap_2, color=sigScores) + 
+  geom_point(size = 0.5) +
+  scale_color_viridis() +
+  facet_grid(celltype~Hallmark)
+
+```
+
+``` {r}
+
+
+ggplot(graph.data, aes(x = celltype, y = sigScores)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of Signature Scores by Cell Type" # Plot title
+  ) +
+  facet_grid(~Hallmark)
+
+head(graph.data)
+
+```
+
+``` {r}
+
+FeaturePlot(huang.adipo, features = c("LPL"))
+FeaturePlot(huang.adipo, features = c("FABP4"))
+FeaturePlot(huang.adipo, features = c("EBF2"))
+FeaturePlot(huang.adipo, features = c("GAPDH"))
+FeaturePlot(huang.adipo, features = c("PNPLA4"))
+
+```
+
+
+``` {r}
+
+#viewResults(vis)
+
+```

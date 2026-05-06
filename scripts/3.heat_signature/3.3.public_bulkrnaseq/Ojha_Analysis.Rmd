@@ -1,0 +1,304 @@
+---
+title: "GSE82155_Analysis"
+output: html_document
+date: "2024-12-17"
+---
+
+# Loading packages
+
+
+```{r }
+library(affy) # For preprocessing older Affymetrix arrays
+library(oligo) # For preprocessing newer or high-density arrays
+library(hgu133plus2.db)
+library(pheatmap)
+library(tidyverse)
+```
+
+The first part is to load the files. The affymatrix files are available with the .CEL extension and requires specific packages to open. Here, we'll use oligo to open and process the files.
+
+```{r}
+# Read .CEL files (path to folder containing .CEL files)
+oligo_data <- read.celfiles(oligoClasses::list.celfiles("../Data/Published Bulk Datasets/GSE82155_RAW - Neonates vs infancy epicardial", full.names = TRUE))
+
+annotation(oligo_data)
+```
+
+Next, from this object we use the function rma() which does the data pre-processing that we need. It take s the data, does background subtraction, quantile normalisation and summarisation.
+
+``` {r}
+# Background correction, normalization, and summarization
+eset <- rma(oligo_data) # Produces an ExpressionSet object
+```
+
+To extract the expression matrix from the above object (eset) the below exprs() function is used.
+
+``` {r}
+# Convert ExpressionSet object to a matrix
+expr_matrix <- exprs(eset)
+```
+
+The probe ids on this matrix are not obviously interpretable and need to be translated to their respective gene ids. The specific key used for this matrix is from hugene10sttranscriptcluster.db (loaded in the above library) and this next chunk extracts and adds these keys to the dataset.
+
+``` {r}
+# Get transcript cluster IDs
+transcript_ids <- rownames(expr_matrix)
+
+# Map transcript cluster IDs to gene symbols
+gene_symbols <- mapIds(hgu133plus2.db,
+  keys = transcript_ids,
+  column = "SYMBOL",
+  keytype = "PROBEID"
+)
+
+# Add gene symbols to the expression matrix
+expr_matrix <- cbind(expr_matrix, GeneSymbol = gene_symbols)
+```
+
+This form of the data is less easy to work with since it doesn't have the subject information attached. The below is done to change the subject IDs to match their identity.
+
+``` {r}
+annotation <- as.data.frame(expr_matrix) %>%
+  gather(1:46, key = "sample", value = "value") %>%
+  group_by(sample) %>%
+  summarise(sampleId = n()) %>%
+  mutate(Group = case_when(
+    grepl("_AI_", sample) ~ "Infant",
+    grepl("_BN_", sample) ~ "Neonate",
+    grepl("_CC_", sample) ~ "Child",
+    TRUE ~ "Unknown" # Default case, if no condition is met
+  )) %>%
+  dplyr::select(sample, Group) %>%
+  as.data.frame()
+
+annotation <- annotation[order(annotation$Group, decreasing = TRUE), ]
+
+rownames(annotation) <- annotation$sample
+annotation$sample <- NULL # Remove redundant column
+```
+
+
+In some cases there can be probes that don't have associated gene IDs. The next chunk removes those rows that do not have gene symbols.
+
+``` {r}
+# Check for missing annotations
+sum(is.na(gene_symbols))
+
+# Filter out rows without gene symbols
+expr_matrix_filtered <- expr_matrix[!is.na(gene_symbols), ]
+```
+
+This next section selects those genes which are present in the HEAT gene signature and prepares them in a matrix.
+
+``` {r}
+HEAT <- read.csv("../Data/Published Bulk Datasets/GSE82155_RAW - Neonates vs infancy epicardial/HEAT_Gene_Signature.csv", header = FALSE)
+
+HEAT_data <- as.data.frame(expr_matrix_filtered) %>%
+  dplyr::filter(GeneSymbol %in% rbind(HEAT$V1, "UCP1")) %>%
+  rownames_to_column(var = "probeid") %>%
+  gather(., 2:47, key = "sample", value = "value") %>%
+  mutate(value = as.numeric(value)) %>%
+  spread(sample, value) %>%
+  dplyr::select(-probeid)
+
+# Reorganising the data so that it is in the preferred order on the heatmap and converting it to a matrix.
+ordered_samples <- annotation[order(annotation$Group, decreasing = TRUE), , drop = FALSE] %>%
+  rownames()
+expression_matrix <- as.matrix(HEAT_data[, ordered_samples])
+
+# The rownames for the matrix are set using the GeneSymbol column in HEAT_data
+rownames(expression_matrix) <- HEAT_data$GeneSymbol
+```
+
+There are several rows that are duplicates fom multiple probes of the same gene. 
+
+``` {r fig.height = 15, fig.width = 6}
+rownames(expression_matrix) <- make.unique(rownames(expression_matrix))
+
+# Find duplicated rownames
+duplicated_rows <- duplicated(rownames(expression_matrix))
+
+# Print the duplicated rownames
+rownames(expression_matrix)[duplicated_rows]
+
+# Identify rows with zero standard deviation
+zero_sd_rows <- apply(expression_matrix, 1, sd) == 0
+
+# Remove rows with zero standard deviation
+expression_matrix <- expression_matrix[!zero_sd_rows, ]
+
+expression_matrix <- expression_matrix[order(rownames(expression_matrix)), ]
+
+# Create heatmap
+pheatmap(expression_matrix,
+  scale = "row", # Normalize rows (genes)
+  clustering_distance_rows = "euclidean", # Clustering for rows
+  clustering_distance_cols = "euclidean", # Clustering for columns
+  clustering_method = "complete", # Hierarchical clustering method
+  main = "Gene Expression Heatmap",
+  annotation_col = annotation
+) # Title
+
+# Heatmap without clustering
+pheatmap(expression_matrix,
+  scale = "row", # Normalize rows (genes)
+  clustering_distance_rows = "euclidean", # Clustering for rows
+  cluster_cols = FALSE, # Clustering for columns
+  clustering_method = "complete", # Hierarchical clustering method
+  main = "Heatmap without clustering",
+  annotation_col = annotation
+) # Title
+```
+
+These heatmaps may not be the best at visualizing comparisons between groups since there appears to be a fair amount of variance. To follow this up, we can also look at boxplots.
+
+``` {r, fig.height = 15, fig.width = 12}
+genes <- as.data.frame(expression_matrix) %>%
+  rownames_to_column(var = "GeneID") %>%
+  dplyr::select(GeneID)
+
+
+boxplot <- as.data.frame(expression_matrix) %>%
+  rownames_to_column(var = "GeneID") %>%
+  gather(., 2:47, key = "Sample", value = "Value") %>%
+  left_join(.,
+    annotation %>% rownames_to_column(var = "Sample"),
+    by = "Sample"
+  )
+
+ggplot(boxplot, aes(x = factor(Group, levels = c("Neonate", "Infant", "Child")), y = Value, fill = Group)) +
+  geom_boxplot() +
+  ggtitle("Gene Expression Comparison") +
+  scale_fill_manual(values = c("Infant" = "#F8766D", "Neonate" = "#619CFF", "Child" = "#00BA38")) +
+  theme_minimal() +
+  facet_wrap(~GeneID, scales = "free_y")
+```
+
+In the above boxplots, it looks like generally most genes appear to go down with age (highest at neo) although there are some exceptions. Notably INSIG1 appears to not have a strong relationship which is similar to what was observed for the paraganglioma case in Sondergaard 2014.
+
+#### Performing ssGSEA on data with HEAT signature 
+
+``` {r}
+df <- as.data.frame(expr_matrix_filtered)
+rownames(df) <- NULL
+df <- df[!duplicated(df$GeneSymbol), ]
+rownames(df) <- NULL
+
+meta <- data.frame("samples" = colnames(df)) %>%
+  dplyr::filter(samples != "GeneSymbol") %>%
+  mutate(
+    samples1 = samples,
+    samples1 = str_remove(samples1, "\\.CEL")
+  ) %>%
+  separate(col = samples1, into = c("GEO Extension", "Site", "Subject"), sep = c("_"))
+
+mat <- df %>%
+  column_to_rownames(var = "GeneSymbol") %>%
+  mutate_if(is.character, as.numeric) %>%
+  as.matrix()
+```
+
+
+```{r}
+# Save the matrix
+write.csv(mat, "../Output/2 - Figure and Analysis/X.BulkRNAseqAnalysis/Cleaned_Datasets/Ohja_Cleaned.csv")
+```
+
+```{r}
+# save the metadata
+meta <- data.frame(
+  sample = rownames(annotation),
+  group = annotation$Group,
+  order = NA
+)
+meta <- meta %>% mutate(order = case_when(
+  group == "Neonate" ~ 1,
+  group == "Infant" ~ 2,
+  group == "Child" ~ 3,
+  TRUE ~ NA
+))
+write.csv(meta, "../Output/2 - Figure and Analysis/X.BulkRNAseqAnalysis/Experimental_Design/Ohja_SampleGroups.csv")
+```
+
+
+``` {r}
+heat_collection <- GeneSetCollection(GeneSet(HEAT_signature,
+  setName = "HEAT"
+))
+expr_set <- ExpressionSet(assayData = mat)
+
+epicard.gsea <- gsva(ssgseaParam(expr_set, heat_collection))
+
+epicard.heat <- t(epicard.gsea@assayData$exprs) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "samples") %>%
+  left_join(meta, by = "samples")
+# Sample 1 is Patient Subcutaneous, Sample 2 is Patient Visceral, Sample 3 Control Visceral
+
+rm(epicard.gsea, pheo)
+```
+
+``` {r fig.height = 4, fig.width = 3}
+ggboxplot(epicard.heat,
+  x = "Site",
+  y = "HEAT",
+  color = "Site",
+  palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+  add = "jitter",
+  shape = "Site"
+) +
+  # stat_compare_means(comparisons = c("Deep", "Superficial"), label = "p.signif") +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1),
+    axis.title.x = element_blank()
+  ) +
+  ggtitle("HEAT Signature Scores")
+```
+
+
+``` {r fig.height = 3.5, fig.width = 3.5}
+ucp1vHEAT <- epicard.heat %>%
+  left_join(
+    data.frame(expr_matrix_filtered) %>%
+      dplyr::filter(GeneSymbol == "UCP1") %>%
+      rownames_to_column(var = "probeid") %>%
+      column_to_rownames(var = "GeneSymbol") %>%
+      dplyr::select(-1) %>%
+      t() %>%
+      data.frame() %>%
+      rownames_to_column(var = "samples") %>%
+      mutate(UCP1 = as.numeric(UCP1)),
+    by = "samples"
+  )
+
+ggplot(
+  ucp1vHEAT %>%
+    mutate(Site = ifelse(Site == "BN", "Neonate",
+      ifelse(Site == "AI", "Infant", "Child")
+    )),
+  aes(x = HEAT, y = UCP1)
+) +
+  geom_point(aes(color = Site)) +
+  geom_smooth(
+    data = ucp1vHEAT %>%
+      mutate(Site = ifelse(Site == "BN", "Neonate",
+        ifelse(Site == "AI", "Infant", "Child")
+      )),
+    method = "lm",
+    linetype = "dashed",
+    se = FALSE
+  ) +
+  stat_poly_eq(
+    data = ucp1vHEAT %>%
+      mutate(Site = ifelse(Site == "BN", "Neonate",
+        ifelse(Site == "AI", "Infant", "Child")
+      )),
+    aes(label = paste(..rr.label..,
+      ..p.value.label..,
+      sep = "~~~"
+    )),
+    formula = y ~ x,
+    parse = TRUE
+  ) +
+  theme_pubr()
+```

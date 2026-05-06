@@ -1,0 +1,80 @@
+---
+title: "21.Rat_Perivascular_snRNAseq"
+output: html_document
+date: "2024-12-08"
+---
+
+```{r setup, include=FALSE}
+pacman::p_load(SingleCellExperiment,
+               metap,
+               tradeSeq,
+               Seurat,
+               tidyverse, 
+               Matrix,
+               scales,
+               cowplot,
+               viridis,
+               VISION)
+```
+
+
+This script is intended to analyse a snRNAseq dataset from Thompson et al. (2023) that describes the cellular composition of perivascular and subscapular brown adipose tissue from rat (from the gene expression omnibus: GSE244451). The published dataset is available as an h5ad file which is the default output from scanpy in Python. The first part of this script converts the file to a seurat object that allows us to use it here.
+
+While this dataset seems to have high potential, it seems based on the gene expression that there is a high degree of background RNA expression likely due to poor isolation of nuclei in the sample. If the data is filtered for those with low mitochondrial background (<1%), all but one nuclei are filtered out. Notably, it appears that a lot of the contaminating RNA comes from adipocytes as most of the clusters have a high background expression of adiponectin (Adipoq) and uncoupling protein 1 (Ucp1) but markers for other cell types such as Dcn (ASPCs), Ptprc (Immune cells), and Myh11 (SMCs) are pretty selective. Thus, it is difficult draw strong conclusions from this dataset. Note that there does seem to be relatively high expression of Ucp1 and Ppargc1a, likely indicating a lot of this gene contamination comes from mitochondria.
+
+``` {r}
+
+library(zellkonverter)
+library(scater)
+
+# Path to your .h5ad file
+file_path <- "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedDatasets/Thompson 2023 - Rat Perivascular/GSE244451_PVAT_BAT_SCPAnnotated.h5ad"
+
+# Read the .h5ad file
+sce <- readH5AD(file_path)
+
+sce <- logNormCounts(sce)
+
+# Convert SingleCellExperiment to Seurat object
+seurat_obj <- as.Seurat(sce, data = "soupx_orig")
+
+# Explore the Seurat object
+seurat_obj
+
+
+```
+
+``` {r}
+
+seurat_obj=NormalizeData(seurat_obj)
+seurat_obj=FindVariableFeatures(seurat_obj)
+seurat_obj=ScaleData(seurat_obj)
+seurat_obj=RunUMAP(seurat_obj, reduction = "X_scVI", dims = 1:10)
+
+FeaturePlot(seurat_obj, features = "pct_counts_mt")
+
+seurat_obj.lowmt <- subset(seurat_obj, subset = pct_counts_mt < 2)
+
+a <- FeaturePlot(seurat_obj.lowmt, features = "pct_counts_mt")
+b <- FeaturePlot(seurat_obj, features = "pct_counts_mt")
+
+a + b
+
+a <- FeaturePlot(seurat_obj.lowmt, features = "Adipoq")
+b <- FeaturePlot(seurat_obj, features = "Adipoq")
+
+a + b
+
+Idents(seurat_obj) = "celltype"
+VlnPlot(seurat_obj, 
+        features = c("Dcn", "Adipoq", "Ucp1", "Ppargc1a", "Plin4", "Pecam1", "Ptprc", "Dpp4", "Msln", "Cntnap2", "Myh11", "Pdgfrb"),
+        stack = TRUE,
+        flip = TRUE)
+
+Idents(seurat_obj) = "tissue"
+VlnPlot(seurat_obj,
+        features = c("Slc25a5", "Pnpla4", "Cs", "Gk", "Ugt1a1", "Ucp1", "Cobl", "Ca12","Ckmt1a","Insig1","Sgk2","Aco2"),
+        stack = TRUE,
+        flip = TRUE)
+
+```

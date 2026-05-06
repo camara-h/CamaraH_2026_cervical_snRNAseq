@@ -1,0 +1,231 @@
+---
+title: "Description of human neck composition"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+  markdown:
+    wrap: sentence
+---
+
+# Introduction {.tabset}
+
+The purpose of this file is to explore the cellular composition of human
+neck adipose tissue biopsies using Propeller.
+
+## Setting up the environment
+
+```{r setup}
+library(speckle)
+library(Seurat)
+library(limma)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(ComplexUpset)
+library(here)
+
+conflicts_prefer(ggplot2::vars)
+
+INPUT_RDS <- here("data", "adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
+
+OUTPUT_DATA_DIR <- here("output", "2.sobject_characterization", "propeller", "data")
+OUTPUT_FIG_DIR <- here("output", "2.sobject_characterization", "propeller", "figures")
+
+dir.create(OUTPUT_DATA_DIR, showWarnings = FALSE, recursive = TRUE)
+dir.create(OUTPUT_FIG_DIR, showWarnings = FALSE, recursive = TRUE)
+```
+
+# Loading the Seurat object
+
+```{r, message=FALSE}
+s.object <- readRDS(INPUT_RDS)
+
+# Replace hyphens in metadata column names to avoid downstream issues
+names(s.object@meta.data) <- gsub("-", "_", names(s.object@meta.data))
+```
+
+# Workflow
+
+This section prepares the data for plotting and significance testing.
+For the main comparison, only Deep and Superficial neck samples are used.
+
+```{r}
+Idents(s.object) <- "neck_region"
+small.s.object <- subset(s.object, idents = c("Deep", "Superficial"))
+propeller_input <- small.s.object@meta.data
+```
+
+## Cell type proportions by sample
+
+```{r}
+propeller_list <- getTransformedProps(
+  clusters = s.object$cell_type_short,
+  sample = s.object$sample
+)
+
+props_meta <- as_tibble(propeller_list$Proportions) %>%
+  left_join(
+    s.object@meta.data %>%
+      select(sample, neck_region) %>%
+      distinct(),
+    by = "sample"
+  ) %>%
+  mutate(
+    n_pct = n * 100,
+    neck_region = factor(neck_region, levels = c("Superficial", "Intermediate", "Deep"))
+  ) %>%
+  left_join(
+    s.object@meta.data %>%
+      select(cell_type, cell_type_short) %>%
+      distinct(cell_type_short, .keep_all = TRUE),
+    by = c("clusters" = "cell_type_short")
+  )
+
+write_csv(props_meta, file.path(OUTPUT_DATA_DIR, "cellular_proportions_table.csv"))
+```
+
+## Average proportions
+
+```{r}
+avg_prop <- props_meta %>%
+  group_by(clusters, cell_type) %>%
+  summarise(
+    n = sum(!is.na(n_pct)),
+    mean_pct = mean(n_pct, na.rm = TRUE),
+    sem_pct = sd(n_pct, na.rm = TRUE) / sqrt(n),
+    mean_sem = paste0(round(mean_pct, 1), " ± ", round(sem_pct, 1), "%"),
+    .groups = "drop"
+  ) %>%
+  mutate(text_description = paste0(cell_type, " (", clusters, ", ", mean_sem, ")"))
+
+write_csv(avg_prop, file.path(OUTPUT_DATA_DIR, "cellular_average_proportions_table.csv"))
+```
+
+## Helper functions
+
+```{r}
+filter_propeller_samples <- function(df, min_cell_threshold = 0) {
+  sample_count <- df %>% count(sample)
+  samples_keep <- sample_count %>%
+    filter(n > min_cell_threshold) %>%
+    pull(sample)
+
+  df %>% filter(sample %in% samples_keep)
+}
+
+run_propeller_test <- function(df, group_col) {
+  res <- propeller(
+    clusters = df$cell_type_short,
+    sample = df$sample,
+    group = df[[group_col]]
+  )
+
+  if ("BaselineProp.clusters" %in% colnames(res)) {
+    res <- res %>%
+      rename(cell_type_short = BaselineProp.clusters)
+  } else {
+    res <- res %>%
+      rownames_to_column("cell_type_short")
+  }
+
+  res %>%
+    rename(p.val = P.Value) %>%
+    mutate(
+      p_display = sprintf("%.3f", p.val),
+      fdr_display = sprintf("%.3f", FDR)
+    )
+}
+
+
+```
+
+## Main Propeller test. Deep vs Superficial
+
+```{r}
+min_cell_threshold <- 0
+propeller_input_filtered <- filter_propeller_samples(
+  propeller_input,
+  min_cell_threshold = min_cell_threshold
+)
+
+prop_results <- run_propeller_test(
+  propeller_input_filtered,
+  group_col = "neck_region"
+) %>%
+  mutate(
+    min_cell_filter = min_cell_threshold,
+    group1 = "Superficial",
+    group2 = "Deep",
+    y.position = 75,
+    colors = ifelse(p.val < 0.05, "red", "black")
+  )
+```
+
+```{r}
+# Bracket coordinates for later annotation
+bracket_length <- 0.2
+
+cluster_order <- props_meta %>%
+  group_by(clusters) %>%
+  summarise(avg_abundance = mean(n_pct), .groups = "drop") %>%
+  arrange(desc(avg_abundance)) %>%
+  pull(clusters)
+
+prop_results <- prop_results %>%
+  mutate(
+    cell_type_short = factor(cell_type_short, levels = cluster_order),
+    xmin = as.numeric(cell_type_short) - bracket_length,
+    xmax = as.numeric(cell_type_short) + bracket_length
+  )
+
+max_prop <- props_meta %>%
+  group_by(clusters) %>%
+  summarise(y.pos = max(n_pct), .groups = "drop") %>%
+  mutate(y.pos = 1.1 * y.pos)
+
+prop_results <- prop_results %>%
+  left_join(max_prop, by = c("cell_type_short" = "clusters"))
+
+write_csv(prop_results, file.path(OUTPUT_DATA_DIR, "proportions_stat_table.csv"))
+```
+
+```{r}
+# -----------------------------
+#  Export sample level counts 
+# -----------------------------
+
+sample_summary <- small.s.object@meta.data %>%
+  count(sample, neck_region, name = "n_nuclei") %>%
+  arrange(neck_region, sample)
+
+write_csv(
+  sample_summary,
+  file.path(OUTPUT_DATA_DIR, "sample_nuclei_counts_deep_superficial.csv")
+)
+
+```
+
+```{r}
+# -----------------------------
+#  Export celltype-counts by sample 
+# -----------------------------
+
+cell_type_sample_counts <- small.s.object@meta.data %>%
+  count(sample, neck_region, cell_type_short, cell_type, name = "n_nuclei") %>%
+  arrange(neck_region, sample, cell_type_short)
+
+write_csv(
+  cell_type_sample_counts,
+  file.path(OUTPUT_DATA_DIR, "cell_type_counts_by_sample_deep_superficial.csv")
+)
+```
+
+```{r}
+writeLines(
+  capture.output(sessionInfo()),
+  file.path(OUTPUT_DATA_DIR, "sessionInfo_propeller_composition.txt")
+)
+```
+

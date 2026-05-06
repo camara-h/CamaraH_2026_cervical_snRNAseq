@@ -1,0 +1,296 @@
+---
+title: "Analysis of genes of interest [Literature based]"
+author: "Henrique Camara"
+date: '2023-11-20'
+output:
+  bookdown::html_document2:
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+# Setting up environment ===================================================
+# Loading relevant libraries
+library(tidyverse) # includes ggplot2, for data visualisation. dplyr, for data manipulation.
+library(pheatmap) # for our heatmap
+library(RColorBrewer) # for a colourful plot
+library(Seurat)
+library(viridis)
+library(DGEobj.utils)
+library(here)
+```
+
+#Load the dataset
+
+```{r load-seurat}
+s.object <- readRDS(here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"))
+```
+
+#Collecting the data expression matrix
+
+```{r create-cts}
+# Define cell type annotation
+cell_level <- "cell_type" # Choose the clustering annotation from metadata
+
+# Collect and format expression matrix
+cts <- AggregateExpression(s.object,
+  assays = "RNA",
+  slot = "counts", # Get the raw data and CPM it
+  return.seurat = F,
+  group.by = c("sample", cell_level, "neck_region")
+)
+# Format cts. Generate sample_cell_region x gene matrix
+cts <- cts$RNA
+cts <- as.data.frame(cts)
+cts <- t(cts)
+cts <- round(cts)
+
+# Convert to CPMs for plotting
+t.cts <- t(cts)
+t.cts[1:5,1:5]
+str(t.cts)
+```
+
+```{r convert-cts-to-cpm}
+CPM_cts <- convertCounts(
+  t.cts,
+  unit = "CPM",
+  log = FALSE,
+  normalize = "none",
+  prior.count = NULL
+)
+rm(t.cts)
+
+# Reformat for compatibility with pheatmap
+CPM_cts <- t(CPM_cts)
+CPM_cts <- as.data.frame(CPM_cts)
+cts <- CPM_cts
+rm(CPM_cts)
+
+# Format the matrices
+rownames(cts) <- gsub("-", "_", rownames(cts))
+cts <- t(cts)
+```
+
+#Prepare metadata
+
+```{r}
+# Load metadata
+meta <- s.object@meta.data
+
+# Prepare df for future cell annotation
+df <- meta %>%
+  mutate(combined_name = paste(sample, !!sym(cell_level), neck_region, sep = "_")) %>%
+  distinct(combined_name, .keep_all = TRUE)
+rownames(df) <- NULL
+df <- df %>%
+  column_to_rownames("combined_name")
+```
+
+#Load the genes of interest
+
+```{r}
+# DEG DESeq2====
+# Filtered == p.adj <= 0.05
+goi <- read.csv(here("../output/3 - Figure and Analysis/01_Pseudobulk_DE/pseudobulk_deseq_dge.csv"))
+goi <- read.csv(here("output", "4.downstream_pipelines", "de_analysis", "data", "deseq2_stats.csv"))
+```
+
+```{r}
+# Filter the goi to get all DEG at padj <= 0.05 from adipocytes
+filtered_goi <- goi %>%
+  dplyr::filter(grepl("White Adipocyte", cell_type), padj <= 0.05)
+
+# Initialize list
+genes <- list()
+
+# Get all DEG genes
+genes[["UP_DEEP"]] <- filtered_goi %>%
+  dplyr::filter(log2FoldChange > 0 & contrast.1 == "Deep" & contrast.2 == "Superficial") %>%
+  arrange(padj) %>%
+  pull(gene)
+genes[["UP_SUPERFICIAL"]] <- filtered_goi %>%
+  dplyr::filter(log2FoldChange < 0 & contrast.1 == "Deep" & contrast.2 == "Superficial") %>%
+  arrange(padj) %>%
+  pull(gene)
+```
+
+```{r}
+pheatmapDataProcess <- function(
+    cells_included = "White Adipocytes", # Vector of regex patterns to include
+    genes, # List with of gene names
+    cell_level = "cell_type_simplified",
+    region_show = NULL, # Column name in `meta` and `df` defining cell type
+    cts, # Count matrix (genes x samples)
+    meta, # Metadata with sample, cell type, neck_region
+    df, # Annotation dataframe (rows = samples)
+    min_cell_threshold = 2, # Minimum number of cells per sample/group/region
+    neck.color, # Named vector or list of colors for neck_region
+    pallete.use # Named vector or list of colors for cell types
+    ) {
+  # Check if cell_level is valid
+  stopifnot(cell_level %in% colnames(meta))
+
+  # Determine gaps for rows (genes)
+  gene_count <- unlist(lapply(genes, length))
+  gaps_row <- if (length(gene_count) > 1) cumsum(gene_count)[-length(gene_count)] else NULL
+  
+  # Subset count matrix to genes of interest
+  genes <- unlist(genes)
+  data <- cts[genes, , drop = FALSE]
+
+  # Filter for cell/sample combinations with enough cells
+  cell_count <- meta %>%
+    dplyr::count(sample, !!sym(cell_level), neck_region) %>%
+    dplyr::filter(n > min_cell_threshold) %>%
+    dplyr::mutate(rowname = paste(sample, !!sym(cell_level), neck_region, sep = "_"))
+
+  # Keep only valid columns in count matrix
+  data <- data[, colnames(data) %in% cell_count$rowname]
+
+  # Subset by regex on colnames if cell types are specified
+  if (!is.null(cells_included)) {
+    sample_idx <- grep(paste(cells_included, collapse = "|"), colnames(data), value = TRUE, ignore.case = TRUE)
+  } else {
+    sample_idx <- colnames(data)
+  }
+
+  # Subset by regex on colnames if neck_regions are specified
+  if (!is.null(region_show)) {
+    sample_idx <- grep(paste(region_show, collapse = "|"), sample_idx, value = TRUE, ignore.case = TRUE)
+  } else {
+    sample_idx <- sample_idx
+  }
+
+  # Subset data and annotations
+  data <- data[, sample_idx, drop = FALSE]
+  ann_df.sub <- df[sample_idx, , drop = FALSE]
+
+
+  # Define column gaps based on cell type + neck_region
+  cut_nums <- ann_df.sub %>%
+    count(!!sym(cell_level), neck_region) %>%
+    pull(n)
+
+  gaps_col <- if (length(cut_nums) > 1) cumsum(cut_nums)[-length(cut_nums)] else NULL
+
+  # Rename the annotation df
+  ann_df.sub <- ann_df.sub %>% select("Sample ID" = "subject","Cell" = !!sym(cell_level), "Neck region" = "neck_region")
+  sample_count <- ann_df.sub %>%
+    count(`Sample ID`) %>%
+    arrange(-n)
+  sample_order_levels <- sample_count %>% distinct(`Sample ID`) %>% pull(`Sample ID`)
+  min_len <- min(max(sample_count$n), 5)
+
+  #Choose palettes
+  brewer_sets <- c("Oranges", "Blues", "Greens", "Reds", "Greys")
+
+  #For each sample, assign monochromatic colors
+  sample_colors <- list()
+
+  for (i in seq_len(min_len)) {
+    color_df <- sample_count %>%
+      mutate(n = case_when(
+        n > 5 ~ 5,
+        TRUE ~ n
+      )) %>%
+      filter(n == i)
+    n_obs <- nrow(color_df)
+    palette_name <- brewer_sets[i]
+
+    # Get a color ramp from dark to light (reverse order)
+    ramp <- colorRampPalette(brewer.pal(9, palette_name)[3:9])(n_obs)
+    sample_colors[[i]] <- setNames(rev(ramp), color_df$`Sample ID`) # darkest = highest count
+  }
+
+
+  # Define annotation colors dynamically
+  ann_colors <- list(
+    "Neck region" = neck.color[unique(ann_df.sub$`Neck region`)],
+    "Cell" = pallete.use[unique(ann_df.sub$Cell)],
+    "Sample ID" = unlist(sample_colors)
+  )
+  
+    # Reorder annotations and data
+  sample_order <- ann_df.sub %>%
+    mutate(rownames = rownames(.),
+           `Sample ID` = factor(`Sample ID`, levels = sample_order_levels)) %>%
+    arrange(`Cell`, `Neck region`,`Sample ID`)
+
+  rownames(sample_order) <- sample_order$rownames
+  plot.data <- data[, rownames(sample_order), drop = FALSE]
+
+  return(list(
+    gaps_col = gaps_col,
+    plot.data = plot.data,
+    ann_df.sub = ann_df.sub,
+    ann_colors = ann_colors,
+    gaps_row = gaps_row,
+    sample_count = sample_count,
+    sample_colors = sample_colors
+  ))
+}
+```
+
+
+```{r output-pheatmap-matrix}
+pheatmap_data_all_deg <- pheatmapDataProcess(
+  cells_included = c("Brown", "White Adipocyte"),
+  region_show = c("Superficial", "Deep"),
+  genes = genes[c("UP_DEEP", "UP_SUPERFICIAL")],
+  cell_level = cell_level,
+  cts = cts,
+  meta = meta,
+  df = df,
+  min_cell_threshold = 10,
+  neck.color = neck.color,
+  pallete.use = palette.use
+)
+
+data <- pheatmap_data_all_deg$plot.data
+data <- data[,rev(colnames(data))]
+pheatmap_data_all_deg$plot.data <- data
+
+OUTPUT_DIR <- here("output/4.downstream_pipelines/de_analysis/data")
+dir.create(OUTPUT_DIR, recursive = T, showWarnings = F)
+saveRDS(pheatmap_data_all_deg, here(OUTPUT_DIR, "heatmap_input.rds"))
+```
+
+# --- Plot and save
+
+
+
+# --- Plotting Hox genes
+
+```{r}
+pheatmap_hox <- pheatmapDataProcess(
+  cells_included = c("White Adipocyte", "Brown", "Prog"),
+  region_show = c("Superficial", "Deep"),
+  genes = list(c("PAX3", "HOXD3", "HOXD4", "IRX2", "IRX5", "HOXA3", "HOXA4", "HOXA5")),
+  cell_level = cell_level,
+  cts = cts,
+  meta = meta,
+  df = df,
+  min_cell_threshold = 0,
+  neck.color = neck.color,
+  pallete.use = palette.use
+)
+
+pheatmap::pheatmap(
+  mat = log1p(pheatmap_hox$plot.data),
+  col = rev(RColorBrewer::brewer.pal(11, "RdBu")),
+  annotation_col = pheatmap_hox$ann_df.sub,
+  annotation_colors = pheatmap_hox$ann_colors,
+  legend_width = 0.3,
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  show_colnames = FALSE,
+  show_rownames = TRUE,
+  scale = "row",
+  gaps_col = pheatmap_hox$gaps_col,
+  gaps_row = pheatmap_hox$gaps_row,
+  fontsize = 6, # Default font size
+  fontsize_row = 6, # Row labels
+  fontsize_col = 6 # Column labels
+  )
+           
+```

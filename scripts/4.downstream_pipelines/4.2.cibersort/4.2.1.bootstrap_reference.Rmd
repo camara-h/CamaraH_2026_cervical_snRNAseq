@@ -1,0 +1,230 @@
+---
+title: "CIBERSORTx sampling of snRNA-seq reference"
+output: html_document
+date: "2026-04-22"
+---
+
+# Introduction
+
+This notebook generates 10 downsampled versions of the snRNA-seq neck
+adipose reference for repeated CIBERSORTx deconvolution.
+
+In each iteration, a random sampling fraction between 20% and 25% is
+drawn, and cells are sampled proportionally within each cell type. The
+resulting sampled Seurat object and sampled reference matrix are saved in
+a separate `sample_N` folder.
+
+## Important notes
+
+- This notebook prepares the **reference inputs** for CIBERSORTx.
+- After these `sample_N` folders are created, the sampled reference files
+  are uploaded manually to CIBERSORTx together with the bulk RNA-seq
+  matrices.
+- The resulting CIBERSORTx outputs are later downloaded and stored back
+  into the corresponding dataset/sample folders for downstream
+  aggregation.
+
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(tidyverse)
+library(pheatmap)
+library(RColorBrewer)
+library(Seurat)
+library(viridis)
+library(DGEobj.utils)
+library(MASS)
+library(Matrix)
+library(data.table)
+library(here)
+
+# -------------------------------------------------------------------------
+# Define input and output paths
+# -------------------------------------------------------------------------
+SEURAT_INPUT <- here(
+  "data",
+  "adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"
+)
+
+OUTPUT_DATA_DIR <- here(
+  "output",
+  "4.downstream_pipelines",
+  "cibersort",
+  "data",
+  "samples"
+)
+
+dir.create(OUTPUT_DATA_DIR, recursive = TRUE, showWarnings = FALSE)
+
+# -------------------------------------------------------------------------
+# Analysis settings
+# -------------------------------------------------------------------------
+CELL_TYPE_COLUMN <- "cell_type"
+N_SAMPLES <- 10
+MIN_PERCENT <- 20
+MAX_PERCENT <- 25
+BATCH_SIZE <- 10000
+```
+
+# Load inputs
+
+```{r}
+s.object <- readRDS(SEURAT_INPUT)
+```
+
+# Helper function: check cell type distribution
+
+This helper is retained from the original script for quick inspection of
+cell type proportions in the Seurat object.
+
+```{r}
+check_cell_type_distribution <- function(seurat_object,
+                                         cell_type_column = "cell_type") {
+  metadata <- seurat_object@meta.data
+
+  cell_type_summary <- metadata %>%
+    group_by(!!sym(cell_type_column)) %>%
+    summarise(
+      count = n(),
+      fraction = count / nrow(metadata),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(count))
+
+  print(cell_type_summary)
+
+  ggplot(
+    cell_type_summary,
+    aes(x = !!sym(cell_type_column), y = fraction, fill = !!sym(cell_type_column))
+  ) +
+    geom_bar(stat = "identity") +
+    labs(
+      title = "Cell Type Distribution",
+      x = "Cell Type",
+      y = "Fraction of Total Cells"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    guides(fill = "none")
+}
+```
+
+# Helper function: write large data frames in batches
+
+This helper is used to write the sampled reference matrix as a tab-delimited
+text file without holding the full export in memory at once.
+
+```{r}
+write_in_batches <- function(data, file_path, batch_size = 10000) {
+  total_rows <- nrow(data)
+
+  for (i in seq(1, total_rows, by = batch_size)) {
+    end_row <- min(i + batch_size - 1, total_rows)
+    batch <- data[i:end_row, ]
+    batch_dt <- as.data.table(batch)
+
+    fwrite(
+      batch_dt,
+      file = file_path,
+      sep = "\t",
+      col.names = (i == 1),
+      append = (i != 1)
+    )
+
+    message(paste("Written rows", i, "to", end_row))
+  }
+}
+```
+
+# Generate sampled references for CIBERSORTx
+
+```{r}
+for (i in seq_len(N_SAMPLES)) {
+
+  # -----------------------------------------------------------------------
+  # Sampling fraction for this sample_N folder
+  # -----------------------------------------------------------------------
+
+  x <- sample(MIN_PERCENT:MAX_PERCENT, 1)
+  fraction <- x / 100
+
+  cat("--------------------------------------------------------------------------------\n")
+  cat("Iteration:", i, "- Sampling fraction:", fraction, "\n")
+  cat("--------------------------------------------------------------------------------\n")
+
+  # -----------------------------------------------------------------------
+  # Copy the original Seurat object so the full input is not overwritten
+  # -----------------------------------------------------------------------
+  s.object.sample <- s.object
+  metadata <- s.object.sample@meta.data
+  metadata$cell_names <- Cells(s.object.sample)
+
+  # -----------------------------------------------------------------------
+  # Stratified sampling within each cell type
+  # -----------------------------------------------------------------------
+  sampled_cells <- metadata %>%
+    group_by(!!sym(CELL_TYPE_COLUMN)) %>%
+    sample_frac(fraction) %>%
+    pull(cell_names)
+
+  s.object.sample <- subset(s.object.sample, cells = sampled_cells)
+
+  # -----------------------------------------------------------------------
+  # Create the sampled reference expression matrix
+  # -----------------------------------------------------------------------
+  s.object.deep <- s.object.sample
+
+  cts.deep <- GetAssayData(object = s.object.deep, layer = "counts")
+  meta.deep <- s.object.deep@meta.data
+
+  # Preserve the original collaborator logic that reassigns endothelial cells
+  endo_pos <- grepl("Endothelial", meta.deep$cell_type_group)
+  meta.deep$cell_type_group[endo_pos] <- meta.deep$cell_type_res.1.6[endo_pos]
+  s.object.deep@meta.data <- meta.deep
+
+  final_mtx.deep <- cts.deep
+  colnames(final_mtx.deep) <- meta.deep$cell_type_group
+
+  final_mtx.deep_dense <- as.matrix(final_mtx.deep)
+  final_mtx.deep_df <- as.data.frame(final_mtx.deep_dense)
+  final_mtx.deep_df <- cbind(
+    "Gene name" = rownames(final_mtx.deep_df),
+    final_mtx.deep_df
+  )
+
+  # -----------------------------------------------------------------------
+  # Create a subfolder for this sampled reference
+  # -----------------------------------------------------------------------
+  sample_dir <- file.path(OUTPUT_DATA_DIR, paste0("sample_", i))
+  if (!dir.exists(sample_dir)) {
+    dir.create(sample_dir, recursive = TRUE)
+  }
+
+  # -----------------------------------------------------------------------
+  # Save sampled reference matrix for manual CIBERSORTx upload
+  # -----------------------------------------------------------------------
+  output_file_ref <- file.path(sample_dir, "deep_cervical_ref_snRNAseq_sampled.txt")
+
+  if (file.exists(output_file_ref)) {
+    file.remove(output_file_ref)
+  }
+
+  write_in_batches(
+    final_mtx.deep_df,
+    output_file_ref,
+    batch_size = BATCH_SIZE
+  )
+
+  # -----------------------------------------------------------------------
+  # Save sampled Seurat object for provenance and reproducibility
+  # -----------------------------------------------------------------------
+  output_file_rds <- file.path(sample_dir, "sampled_seurat_object.rds")
+  saveRDS(s.object.deep, output_file_rds)
+
+  cat("Saved sample", i, "with sampling fraction =", fraction, "\n")
+}
+
+cat("All sampled references have been processed and saved.\n")
+```

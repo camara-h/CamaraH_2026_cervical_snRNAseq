@@ -1,0 +1,1142 @@
+---
+title: "33.MouseSingleCellDatasets"
+output: html_document
+date: "2025-03-11"
+---
+
+```{r setup, include=FALSE}
+
+pacman::p_load(Seurat,
+               tidyverse,
+               SoupX,
+               biomaRt,
+               reticulate,
+               anndata, 
+               schard,
+               VISION)
+
+```
+
+## Shamsi 2022
+
+``` {r}
+
+shamsi <- readRDS("/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Shamsi 2022 - scRNAseq with immune cells/scBAT_scanpy_noCold2_1_reprocess_paga_assign_cluster_celltype_updated.rds")
+
+```
+
+``` {r}
+
+a <- DimPlot(shamsi, label = TRUE) + NoLegend()
+
+shamsi.noimmun <- subset(shamsi, idents = c("VSM", "EC", "Pericytes", "Lymph_EC", "Pdgfra_APC", "NMSC", "MSC", "Adipocytes", "Macrophages"))
+
+b <- DimPlot(shamsi.noimmun, label = TRUE) + NoLegend()
+
+a + b
+
+rm(shamsi)
+
+```
+
+#### Vision Analysis
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- shamsi.noimmun@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- shamsi.noimmun@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = shamsi.noimmun@meta.data
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+``` {r}
+
+Signatures="/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/mouse_heat.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Shamsi 2022 - scRNAseq with immune cells/VISION_Shamsi_HEAT.rds")
+# vis <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Shamsi 2022 - scRNAseq with immune cells/VISION_Shamsi_HEAT.rds")
+
+```
+
+``` {r fig.width = 8, fig.height = 4}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "mouse_heat"]
+celltype <- shamsi.noimmun$cell_type
+cond <- shamsi.noimmun$cond
+Ucp1 <- FetchData(shamsi.noimmun, vars = "Ucp1")
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Ucp1) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(cond) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+ gather(4, key = "Hallmark", value = "sigScores") 
+
+a <- DimPlot(shamsi.noimmun, 
+             reduction = "umap", 
+             label = TRUE, 
+             pt.size = 0.5,
+             repel = TRUE) + 
+  theme(axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank()) +
+    NoLegend()
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=umap_1, y=umap_2, color=as.numeric(sigScores)) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(limits = c(-0.3,3.5)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "none",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_grid(~Hallmark)
+
+c <- FeaturePlot(shamsi.noimmun, reduction = "umap", feature = "Ucp1") + 
+  theme(axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+        ) +
+  NoLegend()
+
+a + b + c
+
+```
+
+
+``` {r, fig.height = 3.5, fig.width = 3.5}
+
+adipo.genes <- c("Prdm16", "Ebf2", "Adipoq", "Plin1")
+
+graph.data <- graph.data %>% 
+  left_join(as.data.frame(FetchData(shamsi.noimmun, vars = adipo.genes)) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") 
+
+adipo.data <- graph.data %>% 
+  dplyr::filter(celltype == "Adipocytes") 
+
+ggplot(adipo.data) +
+  geom_point(aes(x = sigScores, y = Prdm16), size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Prdm16 in Adipocytes")
+
+ggplot(adipo.data,
+       aes(x = sigScores, 
+           y = log10(Ucp1))) +
+  geom_point(, size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Ucp1 in Adipocytes") + 
+  xlab("HEAT Signature Score") +
+  ylab(expression(log[10] * " UCP1 Expression")) +
+  geom_smooth(method = "lm", 
+              linetype = "dashed",
+              color = "black",
+              se = FALSE) + 
+  stat_poly_eq(aes(label = paste(..rr.label..,
+                                 ..p.value.label.., sep = "~~~")),
+               formula = y ~ x,
+               parse = TRUE)
+
+ggplot(adipo.data) +
+  geom_point(aes(x = sigScores, y = Ebf2), size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Ebf2 in Adipocytes")
+
+```
+
+``` {r}
+
+ggplot(graph.data %>% 
+         dplyr::filter(celltype == "Adipocytes"),
+       aes(x = cond,
+           y = sigScores)) +
+  geom_jitter() +
+  geom_violin() + 
+  theme_pubr()
+
+ggplot(graph.data %>% 
+         dplyr::filter(celltype == "VSM"),
+       aes(x = cond,
+           y = sigScores)) +
+  geom_jitter() +
+  geom_violin() + 
+  theme_pubr()
+
+ggplot(graph.data, 
+         aes(x = celltype,
+           y = sigScores)) +
+  geom_violin() + 
+  theme_pubr()
+
+ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT") %>% 
+         dplyr::filter(celltype == "VSM")) + 
+  aes(x=umap_1, y=umap_2, color=as.numeric(sigScores)) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(limits = c(-0.3,1.5)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "none",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_grid(~cond)
+
+```
+
+``` {r, fig.height = 18, fig.width = 4.5}
+
+VlnPlot(shamsi.noimmun,
+        features = mouse.heat,
+        stack = TRUE,
+        flip = TRUE) +
+  NoLegend()
+
+```
+
+``` {r, fig.height = 18, fig.width = 3}
+
+vsm <- subset(shamsi.noimmun, idents = "VSM")
+Idents(vsm) = "cond"
+VlnPlot(vsm,
+        features = mouse.heat,
+        stack = TRUE,
+        flip = TRUE,
+        split.by = "cond") +
+  NoLegend()
+
+```
+
+## Yu 2024 - Involution in mouse BAT
+
+``` {r}
+
+young <- Read10X(data.dir = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Yu 2024/GSM7920451")
+mid <- Read10X(data.dir = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Yu 2024/GSM7920452")
+old <- Read10X(data.dir = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Yu 2024/GSM7920453")
+
+young = CreateSeuratObject(young, project = "young")
+mid = CreateSeuratObject(mid, project = "mid")
+old = CreateSeuratObject(old, project = "old")
+
+```
+
+#### Merge Datasets
+
+Mouse datasets
+
+``` {r}
+
+yu.mouse = merge(x = young,
+                 y = c(mid, 
+                       old),
+                 add.cell.ids = c("young", 
+                                  "mid", 
+                                  "old"))
+
+```
+
+``` {r}
+
+yu.mouse=NormalizeData(yu.mouse)
+yu.mouse=FindVariableFeatures(yu.mouse)
+yu.mouse=ScaleData(yu.mouse)
+yu.mouse=RunPCA(yu.mouse)
+
+# The below is plotting how many PCs are required. 
+
+ElbowPlot(yu.mouse,ndims = 30)
+
+```
+
+#### Filtering by mitochondrial RNA
+
+``` {r}
+
+# Infer UMAP based on number of PCs selected above
+
+yu.mouse = RunUMAP(yu.mouse,
+                   dims = 1:30,
+                   reduction.name = "umap.unintegrated")
+DimPlot(yu.mouse,
+        reduction = "umap.unintegrated")
+
+# Visualize the mitochondrial content and ribosomal gene content. If there are specific clusters that have a number of mito genes, we can simply remove the whole cluster.
+
+yu.mouse[["percent.mt"]] <- PercentageFeatureSet(yu.mouse, pattern = "^mt-")
+yu.mouse[["percent.rpl"]] <- PercentageFeatureSet(yu.mouse, pattern = "^rpl")
+
+FeaturePlot(yu.mouse,"percent.rpl")
+FeaturePlot(yu.mouse,"percent.mt")
+
+VlnPlot(yu.mouse,"percent.mt")
+
+yu.mouse <- subset(yu.mouse, subset = percent.mt < 1)
+
+FeaturePlot(yu.mouse, features = "Plin1")
+FeaturePlot(yu.mouse, features = "Ucp1")
+
+```
+
+#### Integrating Datasets
+
+``` {r}
+
+yu.mouse <- IntegrateLayers(object = yu.mouse, 
+                            method = CCAIntegration, 
+                            orig.reduction = "pca", 
+                            new.reduction = "integrated.cca",
+                            verbose = FALSE)
+
+# re-join layers after integration
+yu.mouse[["RNA"]] <- JoinLayers(yu.mouse[["RNA"]])
+
+yu.mouse <- FindNeighbors(yu.mouse, reduction = "integrated.cca", dims = 1:30)
+yu.mouse <- FindClusters(yu.mouse, resolution = 0.8)
+yu.mouse <- RunUMAP(yu.mouse, dims = 1:30, reduction = "integrated.cca")
+
+a <- DimPlot(yu.mouse, reduction = "umap.unintegrated")
+b <- DimPlot(yu.mouse, reduction = "umap")
+
+a + b
+
+```
+
+#### Visualising Markers and annotating clusters
+
+``` {r, fig.height = 10, fig.width = 5}
+
+FeaturePlot(yu.mouse,
+            features = c("Ucp1", "Adipoq", "Prdm16", "Ebf2"))
+
+VlnPlot(yu.mouse,
+        features = c("Ucp1", "Plin1", "Adipoq", "Prdm16", "Ebf2", "Pdgfra", 
+                     "Jam2", "Shank3", "Myocd", "Prox1", "Steap4",
+                     "Cd163", "Cpa3", "Il7r", "Csf3r", "Cdh19"),
+        stack = TRUE,
+        flip = TRUE)
+
+```
+
+``` {r}
+
+new.cluster.ids <- c("Adipocyte", "Adipocyte", "Adipocyte", "Adipocyte", "Adipocyte", 
+                     "Adipocyte", "Adipocyte", "Adipocyte", "Adipocyte Progenitor", "Pericytes",
+                     "Endothelial Cell", "Unknown 1", "Adipocyte", "Endothelial Cell",
+                     "Unknown 1", "Unknown 2")
+names(new.cluster.ids) <- levels(yu.mouse)
+yu.mouse <- RenameIdents(yu.mouse, new.cluster.ids)
+yu.mouse$cell_type <- Idents(yu.mouse)
+DimPlot(yu.mouse, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+```
+
+<!-- ``` {r} -->
+
+<!-- # Convert Seurat object into SoupX format -->
+<!-- sc <- SoupChannel(toc = yu.mouse@assays$RNA$data) -->
+<!-- # sc$tod <- yu.mouse@assays$RNA$counts -->
+
+<!-- # Add metadata-based cell type annotation -->
+<!-- metaData <- yu.mouse@meta.data -->
+<!-- cellTypes <- setNames(metaData$cell_type, rownames(metaData)) -->
+
+<!-- # Estimate contamination fraction -->
+<!-- sc <- setClusters(sc, cellTypes)  # Assign clusters based on 'cell_types' -->
+<!-- sc <- autoEstCont(sc)  # Automatically estimate contamination fraction -->
+
+<!-- # Apply SoupX correction -->
+<!-- corrected_counts <- adjustCounts(sc) -->
+
+<!-- # Create a new Seurat object with corrected counts (optional) -->
+<!-- s.object[["RNA_corrected"]] <- CreateAssayObject(corrected_counts) -->
+
+<!-- # Set default assay and normalize -->
+<!-- DefaultAssay(s.object) <- "RNA_corrected" -->
+<!-- s.object <- NormalizeData(s.object) -->
+
+<!-- # Check metadata -->
+<!-- head(s.object@meta.data) -->
+
+<!-- all(rownames(yu.mouse@meta.data) %in% colnames(sc$tod))  # Should return TRUE -->
+
+<!-- sum(rowSums(sc$tod) == 0)  # Count genes with zero expression -->
+<!-- sum(colSums(sc$tod) == 0)  # Count cells with zero expression -->
+
+<!-- ``` -->
+
+
+<!-- ``` {r} -->
+
+<!-- yu.mouse = autoEstCont(yu.mouse) -->
+<!-- out = adjustCounts(yu.mouse) -->
+
+<!-- ``` -->
+
+
+
+#### Heat Markers
+
+
+``` {r}
+
+mouse_human_genes = read.csv("https://www.informatics.jax.org/downloads/reports/HOM_MouseHumanSequence.rpt",sep="\t")
+
+HEAT <- read.csv("../Data/Published Bulk Datasets/GSE82155_RAW - Neonates vs infancy epicardial/HEAT_Gene_Signature.csv", header = FALSE)
+
+heat_conversion <- mouse_human_genes %>% 
+  dplyr::select(DB.Class.Key, Common.Organism.Name, Symbol) %>% 
+  distinct(DB.Class.Key, Common.Organism.Name, .keep_all = TRUE) %>% 
+  tidyr::spread(key = "Common.Organism.Name", value = "Symbol") %>% 
+  dplyr::filter(human %in% HEAT$V1)
+
+mouse.heat <- heat_conversion$'mouse, laboratory'
+rm(heat_conversion)
+
+```
+
+``` {r}
+
+yu.mouse$orig.ident <- factor(yu.mouse$orig.ident, levels = c("young", "mid", "old"))
+FeaturePlot(yu.mouse, features = "Ppargc1a")
+FeaturePlot(yu.mouse, features = "Ucp1", split.by = "orig.ident")
+
+```
+
+#### Vision Analysis
+
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- yu.mouse@assays$RNA@layers$counts
+rownames(counts) = rownames(yu.mouse@assays$RNA@features)
+colnames(counts) = rownames(yu.mouse@assays$RNA@cells)
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- yu.mouse@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = yu.mouse@meta.data
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+``` {r}
+
+Signatures="/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/mouse_heat.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+# vis <- readRDS(file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+
+```
+
+``` {r fig.width = 8, fig.height = 4}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "mouse_heat"]
+celltype <- yu.mouse$cell_type
+Ucp1 <- FetchData(yu.mouse, vars = "Ucp1")
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Ucp1) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+ gather(4, key = "Hallmark", value = "sigScores") 
+
+a <- DimPlot(yu.mouse, 
+             reduction = "umap", 
+             label = TRUE, 
+             pt.size = 0.5,
+             repel = TRUE) + NoLegend()
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=umap_1, y=umap_2, color=as.numeric(sigScores)) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(limits = c(-0.3,2.6)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_grid(~Hallmark)
+
+c <- FeaturePlot(yu.mouse, reduction = "umap", feature = "Ucp1") + NoLegend()
+
+a + b + c
+
+```
+
+``` {r}
+
+graph.data <- graph.data %>% 
+  left_join(as.data.frame(FetchData(yu.mouse, vars = "Prdm16")) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FetchData(yu.mouse, vars = "Ebf2")) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") 
+
+ggplot(graph.data) +
+  geom_point(aes(x = sigScores, y = Prdm16), size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Prdm16")
+
+ggplot(graph.data) +
+  geom_point(aes(x = sigScores, y = Ucp1), size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Ucp1")
+
+ggplot(graph.data) +
+  geom_point(aes(x = sigScores, y = Ebf2), size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Ebf2")
+
+```
+
+### Old dataset only
+
+``` {r}
+
+old=NormalizeData(old)
+old=FindVariableFeatures(old)
+old=ScaleData(old)
+old=RunPCA(old)
+
+# The below is plotting how many PCs are required. 
+
+ElbowPlot(old,ndims = 30)
+
+old = RunUMAP(old,dims = 1:30)
+old <- FindNeighbors(old, reduction = "pca", dims = 1:30)
+old <- FindClusters(old, resolution = 0.2)
+Idents(old) = "RNA_snn_res.0.2"
+
+```
+
+``` {r}
+
+old[["percent.mt"]] <- PercentageFeatureSet(old, pattern = "^mt-")
+a <- DimPlot(old)
+FeaturePlot(old,"percent.mt")
+VlnPlot(old,"percent.mt")
+
+old <- subset(old, subset = percent.mt < 1)
+
+b <- DimPlot(old)
+
+a + b
+
+```
+
+``` {r}
+
+UMAPPlot(old)
+
+adipo.compare <- FindMarkers(old, ident.1 = 0, ident.2 = 1)
+
+View(adipo.compare %>% dplyr::filter(pct.2 > 0.5))
+```
+
+``` {r}
+
+feature = "Prdm16"
+
+FeaturePlot(yu.mouse, reduction = "umap.unintegrated", split.by = "orig.ident", feature = feature)
+
+```
+
+``` {r}
+
+VlnPlot(old, 
+        features = c("Ucp1", "Cd36", "Fabp4", "Prdm16", "Mgll", "Zfp423"),
+        stack = TRUE,
+        flip = TRUE)
+
+```
+
+## Zhang 2025 Pansc
+
+``` {r}
+
+bat <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/GSE247719_PanSci_07_BAT_adata (1).h5ad")
+gwat <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/GSE247719_PanSci_09_gWAT_adata.h5ad")
+iwat <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/GSE247719_PanSci_08_iWAT_adata.h5ad")
+
+```
+
+## Zhang 2025
+
+### BAT
+
+This dataset is from Zhang et al. 2025 and is a single cell RNAseq dataset of mouse BAT. There has been some preparation of the data -
+
+``` {r}
+
+bat = schard::h5ad2seurat('/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/bat_adipo.h5ad')
+
+```
+
+``` {r}
+
+custom_colors <- c("Brown Adipocytes" = "#97600f",  
+                   "White Adipocytes" = "#ffe65a")
+
+```
+
+``` {r}
+
+bat[["percent.mt"]] <- PercentageFeatureSet(bat, pattern = "^mt-")
+
+meta <- bat@meta.data %>% 
+  mutate(nCount_RNA = ifelse(nCount_RNA > 800, 1, 0),
+         nCount_RNA_high = ifelse(nCount_RNA < 3000, 1, 0),
+         percent_mt_cutoff = ifelse(percent.mt < 5, 1, 0),
+         both_cutoffs = ifelse(nCount_RNA == 1 & percent_mt_cutoff == 1 & Genotype == "WT", 1, 0))
+
+print("nCount_RNA")
+table(meta$nCount_RNA)
+print("nCount_RNA_high")
+table(meta$nCount_RNA_high)
+print("percent_mt_cutoff")
+table(meta$percent_mt_cutoff)
+print("both_cutoffs")
+table(meta$both_cutoffs)
+
+VlnPlot(bat, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+
+``` {r}
+
+bat <- subset(bat, subset = Genotype == "WT" & nCount_RNA > 800 & nCount_RNA < 3000 & percent.mt < 5)
+
+```
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- bat@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- bat@reductions$Xumap_@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = bat@meta.data
+```
+
+``` {r}
+
+Signatures="/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/mouse_heat.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+
+# saveRDS(vis, file = "../Data/PublishedSingleCellDatasets/Zhang 2025/BAT_neck_HEAT.rds")
+# vis <- readRDS(file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+
+```
+
+``` {r fig.width = 8, fig.height = 4}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "mouse_heat"]
+celltype <- bat$Sub_cell_type
+cond <- bat$Age_group
+Ucp1 <- FetchData(bat, vars = "Ucp1")
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Ucp1) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(cond) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+ gather(4, key = "Hallmark", value = "sigScores") 
+
+a <- DimPlot(bat, 
+             reduction = "Xumap_", 
+             label = TRUE, 
+             pt.size = 0.5,
+             repel = TRUE) + 
+  theme(axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank()) +
+    NoLegend()
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=Xumap_1, y=Xumap_2, color=as.numeric(sigScores)) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(limits = c(-0.3,3.5)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "none",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_grid(~Hallmark)
+
+c <- FeaturePlot(bat, reduction = "Xumap_", feature = "Ucp1") + 
+  theme(axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+        ) +
+  NoLegend()
+
+a + b + c
+
+```
+
+``` {r}
+
+graph.data <- graph.data %>% 
+  left_join(as.data.frame(FetchData(bat, vars = "Prdm16")) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FetchData(bat, vars = "Ebf2")) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") 
+
+ggplot(graph.data) +
+  geom_point(aes(x = sigScores, y = Prdm16), size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Prdm16")
+
+ggplot(graph.data) +
+  geom_point(aes(x = sigScores, y = log10(Ucp1)), size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Ucp1")
+
+ggplot(graph.data) +
+  geom_point(aes(x = sigScores, y = Ebf2), size = 1) + 
+  theme_pubr() +
+  ggtitle("HEAT Score vs Ebf2")
+
+```
+
+``` {r}
+
+ggplot(graph.data, 
+         aes(x = cond,
+           y = sigScores)) +
+  geom_jitter() +
+  geom_violin() + 
+  theme_pubr()
+
+```
+
+
+### iWAT
+
+``` {r}
+
+iwat = schard::h5ad2seurat('/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/iwat_adipo.h5ad')
+
+```
+
+``` {r}
+
+iwat[["percent.mt"]] <- PercentageFeatureSet(iwat, pattern = "^mt-")
+
+meta <- iwat@meta.data %>% 
+  mutate(nCount_RNA = ifelse(nCount_RNA > 800, 1, 0),
+         nCount_RNA_high = ifelse(nCount_RNA < 3000, 1, 0),
+         percent_mt_cutoff = ifelse(percent.mt < 5, 1, 0),
+         both_cutoffs = ifelse(nCount_RNA == 1 & percent_mt_cutoff == 1 & Genotype == "WT", 1, 0))
+
+print("nCount_RNA")
+table(meta$nCount_RNA)
+print("nCount_RNA_high")
+table(meta$nCount_RNA_high)
+print("percent_mt_cutoff")
+table(meta$percent_mt_cutoff)
+print("both_cutoffs")
+table(meta$both_cutoffs)
+
+VlnPlot(iwat, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+
+``` {r}
+
+iwat <- subset(iwat, subset = Genotype == "WT" & nCount_RNA > 800 & nCount_RNA < 3000 & percent.mt < 5)
+
+```
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- iwat@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- iwat@reductions$Xumap_@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = iwat@meta.data
+```
+
+``` {r}
+
+Signatures="/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/mouse_heat.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+
+# saveRDS(vis, file = "../Data/PublishedSingleCellDatasets/Zhang 2025/iwat_neck_HEAT.rds")
+# vis <- readRDS(file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+
+```
+
+``` {r fig.width = 8, fig.height = 4}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "mouse_heat"]
+celltype <- iwat$Sub_cell_type
+cond <- iwat$Age_group
+Ucp1 <- FetchData(iwat, vars = "Ucp1")
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Ucp1) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(cond) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+ gather(4, key = "Hallmark", value = "sigScores") 
+
+a <- DimPlot(iwat, 
+             reduction = "Xumap_", 
+             label = TRUE, 
+             pt.size = 0.5,
+             repel = TRUE) + 
+  theme(axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank()) +
+    NoLegend()
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=Xumap_1, y=Xumap_2, color=as.numeric(sigScores)) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(limits = c(-0.3,3.5)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "none",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_grid(~Hallmark)
+
+c <- FeaturePlot(iwat, reduction = "Xumap_", feature = "Ucp1") + 
+  theme(axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+        ) +
+  NoLegend()
+
+a + b + c
+
+```
+
+
+
+### gWAT
+
+``` {r}
+
+gWAT = schard::h5ad2seurat('/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/gwat_adipo.h5ad')
+
+```
+
+``` {r}
+
+gWAT[["percent.mt"]] <- PercentageFeatureSet(gWAT, pattern = "^mt-")
+
+meta <- gWAT@meta.data %>% 
+  mutate(nCount_RNA = ifelse(nCount_RNA > 800, 1, 0),
+         nCount_RNA_high = ifelse(nCount_RNA < 3000, 1, 0),
+         percent_mt_cutoff = ifelse(percent.mt < 5, 1, 0),
+         both_cutoffs = ifelse(nCount_RNA == 1 & percent_mt_cutoff == 1 & Genotype == "WT", 1, 0))
+
+print("nCount_RNA")
+table(meta$nCount_RNA)
+print("nCount_RNA_high")
+table(meta$nCount_RNA_high)
+print("percent_mt_cutoff")
+table(meta$percent_mt_cutoff)
+print("both_cutoffs")
+table(meta$both_cutoffs)
+
+VlnPlot(gWAT, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+
+``` {r}
+
+gWAT <- subset(gWAT, subset = Genotype == "WT" & nCount_RNA > 800 & nCount_RNA < 3000 & percent.mt < 5)
+
+```
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- gWAT@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- gWAT@reductions$Xumap_@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = gWAT@meta.data
+```
+
+``` {r}
+
+Signatures="/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/mouse_heat.gmt"
+
+vis <- Vision(scaled_counts, 
+               signatures = Signatures, 
+               meta = meta, pool = FALSE)
+vis <- addProjection(vis3, "UMAP", projection)
+vis <- analyze(vis3)
+
+
+# saveRDS(vis, file = "../Data/PublishedSingleCellDatasets/Zhang 2025/gWAT_neck_HEAT.rds")
+# vis <- readRDS(file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+
+```
+
+### Aggregated Analysis
+
+``` {r}
+
+gWAT_vis <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/gWAT_neck_HEAT.rds")
+iWAT_vis <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/iWAT_neck_HEAT.rds")
+BAT_vis <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Zhang 2025/BAT_neck_HEAT.rds")
+
+```
+
+``` {r, fig.height = 10, fig.width = 6}
+
+tissue_types <- c("BAT", "iWAT", "gWAT")
+seurat_objects <- list(BAT_vis, iWAT_vis, gWAT_vis) 
+names(seurat_objects) <- tissue_types
+
+## Create a more re-usable function
+process_adipose_data <- function(vision_object, tissue_type_name) {
+  
+  umap_projection <- getProjections(vision_object)[["UMAP"]]
+  signature_score <- getSignatureScores(vision_object)[, "mouse_heat"]
+  celltype <- vision_object@metaData %>% dplyr::select("Age_group", "Sex","ID")
+  
+  combined_data <- cbind(as.data.frame(umap_projection),
+                           HEAT = signature_score,
+                           celltype) %>% 
+    mutate(type = tissue_type_name, 
+           Age_group = factor(Age_group, 
+                              levels = c("03_months", 
+                                         "06_months", 
+                                         "12_months", 
+                                         "16_months", 
+                                         "23_months"))) %>%
+    rownames_to_column(var = "cells")
+}
+
+all_data <- purrr::imap(seurat_objects, ~process_adipose_data(.x, .y)) %>%  #Apply function
+  bind_rows() %>% 
+  mutate(adipocyte_type = ifelse(type == "BAT", "Brown Adipocytes", "White Adipocytes")) 
+
+ggplot(all_data, 
+         aes(x = Age_group,
+           y = HEAT, 
+           color = adipocyte_type)) +
+  geom_jitter() +
+  geom_boxplot() +
+  scale_color_manual(values = c("#97600f","#ffe65a","#ffe65a")) + 
+  theme_pubr() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+  ) +
+  facet_grid(Sex~type)
+
+```
+
+``` {r}
+
+by_sample_data <- all_data %>% 
+  group_by(ID, type) %>% 
+  summarise(mean_HEAT = mean(HEAT),
+            sd_HEAT = sd(HEAT),
+            n = n()) %>% 
+  left_join(all_data %>% dplyr::select(ID, Age_group, Sex, type) %>% distinct(),
+            by = c("ID", "type")) %>% 
+  ungroup()
+
+ggplot(by_sample_data, 
+         aes(x = Age_group,
+           y = mean_HEAT, 
+           color = type)) +
+  geom_jitter() +
+  geom_boxplot() +
+  scale_color_manual(values = c("#97600f","#ffe65a","#ffe65a")) + 
+  theme_pubr() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+  ) +
+  facet_grid(Sex~type)
+
+
+
+```

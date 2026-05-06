@@ -1,0 +1,109 @@
+---
+title: "Process CIBERSORTx deconvolution results"
+author: "Henrique"
+date: "2025-09-10"
+output: html_document
+---
+
+# Introduction
+
+This notebook processes CIBERSORTx estimated cellular proportions from
+multiple repeated runs, averages the bootstrap estimates for each sample
+and cell type, adds simple sample-level metadata, and exports the final
+deconvolution table.
+
+The retained final output is:
+
+- `deconvolution_cellular_proportions_table.csv`
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(stringr)
+library(here)
+
+# -------------------------------------------------------------------------
+# Define inputs and outputs
+# -------------------------------------------------------------------------
+
+# Primary directory containing CIBERSORTx result folders
+INPUT_DIR <- here("output", "4.downstream_pipelines", "cibersort", "data", "bootstrap_results")
+
+OUTPUT_DATA_DIR <- here("output", "4.downstream_pipelines", "cibersort", "data")
+
+dir.create(OUTPUT_DATA_DIR, showWarnings = FALSE, recursive = TRUE)
+
+OUTPUT_TABLE <- file.path(
+  OUTPUT_DATA_DIR,
+  "deconvolution_cellular_proportions_table.csv"
+)
+```
+
+# Load CIBERSORTx results
+
+```{r}
+datasets <- list.files(
+  INPUT_DIR,
+  pattern = ".*Job\\d+_Results.*\\.csv$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+
+combined_data <- lapply(datasets, function(file) {
+  data <- read.csv(file)
+  data$File <- file
+  data$Sample <- basename(dirname(file))
+
+  pivot_longer(
+    data,
+    cols = 2:23,
+    names_to = "Cell_type",
+    values_to = "Proportions"
+  )
+}) %>%
+  bind_rows() %>%
+  mutate(
+    Proportions = Proportions * 100,
+    File = str_replace_all(File, "Resultsz", "Results"),
+    Dataset = str_extract(File, "(?<=Results_)[^_]+"),
+    Dataset = str_to_sentence(Dataset)
+  )
+
+combined_data %>% distinct(File, Dataset)
+combined_data %>% filter(is.na(Dataset))
+```
+
+# Average repeated runs and add sample metadata
+
+```{r}
+combined_data_with_meta <- combined_data %>%
+  group_by(Mixture, Cell_type, Dataset) %>%
+  summarise(
+    Proportions = mean(Proportions),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Depot = case_when(
+      str_detect(Mixture, "Deep|BAT") ~ "Deep",
+      str_detect(Mixture, "WAT|SC") ~ "Superficial",
+      str_detect(Mixture, "^C") ~ "Control",
+      str_detect(Mixture, "^F") ~ "Pheo",
+      TRUE ~ Mixture
+    ),
+    Donor_ID = case_when(
+      str_detect(Mixture, "\\d") ~ str_extract(Mixture, "\\d+"),
+      TRUE ~ str_remove(Mixture, "[BW]AT")
+    )
+  )
+```
+
+# Save final deconvolution table
+
+```{r}
+write.csv(combined_data_with_meta, OUTPUT_TABLE, row.names = FALSE)
+```

@@ -1,0 +1,118 @@
+---
+title: "X.02.X_Anguieira_Analysis"
+author: "Henrique"
+date: "2025-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Setting up environment ===================================================
+# Loading relevant libraries
+library(tidyverse) # includes ggplot2, for data visualisation. dplyr, for data manipulation.
+library(pheatmap) # for our heatmap
+library(RColorBrewer) # for a colourful plot
+library(Seurat)
+library(viridis)
+library(DGEobj.utils)
+library(patchwork)
+
+
+# Outputs
+OUTPUT_DATA_DIR <- here("output/3.heat_signature/3.public_snrnaseq/data")
+OUTPUT_FIGURE_DIR <- here("output/3.heat_signature/3.public_snrnaseq/figures")
+CLEANED_DATASET_DIR <- here("output/1.processing/data/cleaned_objects")
+
+dir.create(OUTPUT_DATA_DIR, showWarnings = F, recursive = T)
+dir.create(OUTPUT_FIGURE_DIR, showWarnings = F, recursive = T)
+dir.create(CLEANED_DATASET_DIR, showWarnings = F, recursive = T)
+```
+
+#Load the dataset
+
+```{r load-seurat}
+ANGUEIRA_RDS <- here("../Output/2 - Figure and Analysis/X.VisionObject_Workflow/Cleaned_Datasets/AngueiraA_Dataset.rds")
+
+"../Output/"
+s.object <- readRDS(ANGUEIRA_RDS)
+```
+
+# --- Plot UCP1 expression
+```{r}
+FeaturePlot(s.object, features = "UCP1", order = T)
+```
+
+```{r}
+meta <- s.object@meta.data
+meta |> distinct(cell_type)
+Idents(s.object) <- "cell_type"
+s.object.small <- subset(s.object, idents = "Adipocytes")
+
+df <- FetchData(s.object.small, vars = "UCP1", layer = "data")
+head(df)
+
+str(s.object.small)
+```
+# Read VISION data
+```{r}
+ANGUEIRA_VISION_SIGSCORE <- here("output/4.downstream_pipelines/vision/data/vision_signature_scores/2025_11_08_AngueiraA_Dataset_VISION_sigScore.csv")
+
+sigscores_df <- read.csv(ANGUEIRA_VISION_SIGSCORE)
+```
+
+## Merge data
+```{r}
+ucp1_v_sigscores <- sigscores_df |> 
+  filter(Hallmark == "HEAT") |> 
+  left_join(df |> rownames_to_column("barcode"), by = "barcode") |> 
+  filter(cell_type == "Adipocytes")
+```
+
+## Save the data
+```{r}
+write_csv(ucp1_v_sigscores, file.path(OUTPUT_DATA_DIR,"Angueira_HEATvUCP1.csv"))
+```
+# Subset and recluster adipocytes
+```{r}
+s.object.new <- subset(s.object, idents = c("Adipocytes"))
+
+s.object.new <- NormalizeData(object = s.object.new)
+s.object.new <- FindVariableFeatures(object = s.object.new)
+s.object.new <- ScaleData(object = s.object.new)
+
+s.object.new <- SCTransform(object = s.object.new)
+
+s.object.new <- RunPCA(object = s.object.new)
+s.object.new <- FindNeighbors(object = s.object.new, dims = 1:30)
+s.object.new <- FindClusters(object = s.object.new,  resolution = 0.5, cluster.name = "unintegrated_clusters")
+s.object.new <- RunUMAP(object = s.object.new, dims = 1:30)
+```
+
+Merge the sigscore data
+```{r}
+meta <- s.object.new@meta.data
+if(!"sigScores" %in% colnames(meta)){
+meta <- meta |> rownames_to_column("barcode") |> 
+  left_join(sigscores_df |> filter(Hallmark == "HEAT") |> select(barcode,"HEAT" = sigScores), by = "barcode", unmatched = "drop") |> 
+  column_to_rownames("barcode")
+}
+# Check % over HEAT PERCENTILE (0.989345)
+wad_HEAT_percentile <- 0.989345
+meta <- meta |> mutate(heat_positive = HEAT >= wad_HEAT_percentile)
+s.object.new@meta.data <- meta
+```
+
+# Save the new Seurat object
+```{r}
+saveRDS(s.object.new, file.path(CLEANED_DATASET_DIR, "AngueiraA_Dataset_adipo_recluster.rds"))
+```
+
+
+#Count number of HEAT positives
+```{r}
+heat_pos_anguiera <- meta |> group_by(unintegrated_clusters) |> count(heat_positive) |> mutate("heat_positive_pct" = n/sum(n)*100)
+heat_pos_anguiera
+
+write_csv(heat_pos_anguiera, file.path(OUTPUT_DATA_DIR, "heat_pos_adipo_anguiera.csv"))
+```
+
+

@@ -1,0 +1,201 @@
+---
+title: "CellChat analysis of human neck adipose tissue"
+output: html_document
+date: "2024-12-02"
+---
+
+# Introduction
+
+This notebook runs CellChat separately in Deep and Superficial neck
+adipose depots, then merges the resulting CellChat objects for
+downstream comparative analysis.
+
+The workflow is:
+
+1. Load the cleaned Seurat object.
+2. Run CellChat independently for Deep and Superficial depots.
+3. Save the depot-specific CellChat objects.
+4. Merge the two CellChat objects and save the merged result.
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(CellChat)
+library(Seurat)
+library(tidyverse)
+library(here)
+
+# -------------------------------------------------------------------------
+# Define input and output paths
+# -------------------------------------------------------------------------
+INPUT_RDS <- here(
+  "data",
+  "adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"
+)
+
+OUTPUT_DATA_DIR <- here("output", "4.downstream_pipelines", "cellchat", "data")
+dir.create(OUTPUT_DATA_DIR, showWarnings = FALSE, recursive = TRUE)
+
+# Which population.size settings to run
+POP_SIZE_VALUES <- c(FALSE, TRUE)
+
+# Helper to convert TRUE/FALSE to filename-safe text
+pop_size_label <- function(x) {
+  paste0("pop.size.", tolower(as.character(x)))
+}
+
+# Define all output files at the beginning
+OUTPUT_PATHS <- lapply(POP_SIZE_VALUES, function(pop_size) {
+  label <- pop_size_label(pop_size)
+
+  list(
+    pop_size = pop_size,
+    deep = file.path(
+      OUTPUT_DATA_DIR,
+      paste0("cellchat_deep_", label, "_cell_type_short.rds")
+    ),
+    superficial = file.path(
+      OUTPUT_DATA_DIR,
+      paste0("cellchat_superficial_", label, "_cell_type_short.rds")
+    ),
+    merged = file.path(
+      OUTPUT_DATA_DIR,
+      paste0("cellchat_merged_", label, "_cell_type_short.rds")
+    )
+  )
+})
+
+names(OUTPUT_PATHS) <- sapply(POP_SIZE_VALUES, pop_size_label)
+```
+
+# Helper function
+
+```{r}
+run_cellchat <- function(seurat_obj,
+                         subset_ident = "neck_region",
+                         idents,
+                         group.by = "cell_type",
+                         cellchat_db = CellChatDB.human,
+                         min.cells = 10,
+                         population.size = FALSE) {
+  # Subset the Seurat object to the requested compartment
+  Idents(seurat_obj) <- subset_ident
+  seurat_obj <- subset(seurat_obj, idents = idents)
+
+  # Initialize CellChat object
+  cellchat <- createCellChat(object = seurat_obj, group.by = group.by)
+  cellchat@DB <- cellchat_db
+
+  # Standard CellChat preprocessing and inference workflow
+  cellchat <- subsetData(cellchat)
+  cellchat <- identifyOverExpressedGenes(cellchat)
+  cellchat <- identifyOverExpressedInteractions(cellchat)
+  cellchat <- computeCommunProb(cellchat, population.size = population.size)
+  cellchat <- filterCommunication(cellchat, min.cells = min.cells)
+  cellchat <- computeCommunProbPathway(cellchat)
+  cellchat <- aggregateNet(cellchat)
+  cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP")
+
+  cellchat
+}
+```
+
+# Load Seurat object
+
+```{r}
+seurat_obj <- readRDS(INPUT_RDS)
+
+cellchat_sample_summary <- seurat_obj@meta.data %>%
+  filter(neck_region %in% c("Deep", "Superficial")) %>%
+  count(neck_region, sample, cell_type_short, name = "n_nuclei") %>%
+  arrange(neck_region, sample, cell_type_short)
+
+readr::write_csv(
+  cellchat_sample_summary,
+  file.path(OUTPUT_DATA_DIR, "cellchat_input_nuclei_by_sample_depot_celltype.csv")
+)
+```
+
+# Run CellChat by depot
+
+```{r}
+# Create an empty list to store all CellChat results in memory.
+# Each entry will correspond to one population.size setting:
+#   - "pop.size.false"
+#   - "pop.size.true"
+cellchat_results <- list()
+
+# Loop over each output configuration defined earlier in OUTPUT_PATHS.
+for (nm in names(OUTPUT_PATHS)) {
+
+  # Extract the configuration for the current iteration.
+  cfg <- OUTPUT_PATHS[[nm]]
+
+  # -----------------------------------------------------------------------
+  # Run CellChat on the Deep neck_region subset
+  # -----------------------------------------------------------------------
+  deep_cellchat <- run_cellchat(
+    seurat_obj = seurat_obj,
+    subset_ident = "neck_region",
+    idents = "Deep",
+    group.by = "cell_type_short",
+    population.size = cfg$pop_size
+  )
+
+  # -----------------------------------------------------------------------
+  # Run CellChat on the Superficial neck_region subset
+  # -----------------------------------------------------------------------
+  # This repeats the same workflow as above, but for the Superficial depot.
+  superficial_cellchat <- run_cellchat(
+    seurat_obj = seurat_obj,
+    subset_ident = "neck_region",
+    idents = "Superficial",
+    group.by = "cell_type_short",
+    population.size = cfg$pop_size
+  )
+
+  # -----------------------------------------------------------------------
+  # Save the depot-specific CellChat objects to disk
+  # -----------------------------------------------------------------------
+  saveRDS(deep_cellchat, cfg$deep)
+  saveRDS(superficial_cellchat, cfg$superficial)
+
+  # -----------------------------------------------------------------------
+  # Combine the two depot-specific CellChat objects into a named list
+  # -----------------------------------------------------------------------
+  object_list <- list(
+    Deep = deep_cellchat,
+    Superficial = superficial_cellchat
+  )
+
+  # -----------------------------------------------------------------------
+  # Merge Deep and Superficial CellChat objects for comparative analysis
+  # -----------------------------------------------------------------------
+  cellchat_merged <- mergeCellChat(
+    object.list = object_list,
+    add.names = names(object_list)
+  )
+
+  # Save the merged CellChat object to disk
+  saveRDS(cellchat_merged, cfg$merged)
+
+  # -----------------------------------------------------------------------
+  # Store all results in memory as well
+  # -----------------------------------------------------------------------
+  cellchat_results[[nm]] <- list(
+    deep = deep_cellchat,
+    superficial = superficial_cellchat,
+    merged = cellchat_merged
+  )
+}
+```
+
+## Session Info
+```{r}
+writeLines(
+  capture.output(sessionInfo()),
+  file.path(OUTPUT_DATA_DIR, "sessionInfo_cellchat.txt")
+)
+```
+

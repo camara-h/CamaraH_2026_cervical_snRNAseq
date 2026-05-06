@@ -1,0 +1,75 @@
+---
+title: "Cero_2023_preprocessing"
+author: "Henrique"
+date: "2026-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(openxlsx)
+library(here)
+
+load(here("output/3.heat_signature/data/heat_signature.Rdata")) # Loads HEAT_signature
+```
+
+# Load data
+```{r}
+cero <- read.xlsx(here("data/5.published_datasets/Public_BulkRNAseq/Cero 2023/RNA-seq data set Cero et al.xlsx"))
+```
+
+
+```{r}
+head(cero)
+summary(cero)
+colnames(cero)
+```
+```{r}
+wat.v.bat <- cero |> select(Name, contains("hWA.v.hBA.d30")) |> filter(Name %in% c("UCP1", HEAT_signature))
+wat.v.bat |> arrange(hWA.v.hBA.d30.FC)
+```
+
+```{r, fig.width=3.543307, fig.height=0.8661417}
+mm_to_in(c(90,22))
+cero_plot <- wat.v.bat %>%
+  mutate(
+    sig = hWA.v.hBA.d30.FDRpv < 0.05,
+    direction = if_else(hWA.v.hBA.d30.FC > 0, "WA-enriched", "BA-enriched"),
+    hWA.v.hBA.d30.FC = if_else(hWA.v.hBA.d30.FC > 0, log2(hWA.v.hBA.d30.FC), -log2(abs(hWA.v.hBA.d30.FC)))
+  ) %>%
+  arrange(hWA.v.hBA.d30.FC) %>%
+  mutate(Name = factor(Name, levels = Name)) %>%
+  ggplot(aes(x = hWA.v.hBA.d30.FC, y = Name)) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4, color = "grey50") +
+  geom_segment(
+    aes(x = 0, xend = hWA.v.hBA.d30.FC, y = Name, yend = Name),
+    color = "grey75",
+    linewidth = 0.3
+  ) +
+  geom_point(
+    aes(color = direction, alpha = sig, size = log10(hWA.v.hBA.d30.FDRpv))
+  ) +
+  scale_color_manual(values = c("BA-enriched" = "royalblue3", "WA-enriched" = "firebrick3")) +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.25), guide = "none") +
+  scale_size_continuous(range = c(2,1), breaks = c(-30, -50)) +
+  labs(
+    x = "log2 fold change",
+    y = NULL,
+    color = NULL,
+    title = "hWA vs hBA at d30"
+  ) +
+  theme_nature_metabolism(base_size = 5) + 
+  coord_flip() + 
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        legend.position = "inside",
+        legend.position.inside = c(0.5,0))
+
+cero_plot
+ggsave(here("output/5.figure_preparation/Figure_2/S2Z_cero_deg_fc_sorted.pdf"), width = 90, height = 22, units = "mm", dpi = 600, bg = "white")
+
+cero_plot + scale_y_discrete(limits = c("UCP1", sort(HEAT_signature)))
+ggsave(here("output/5.figure_preparation/Figure_2/S2Z_cero_deg_heat_sorted.pdf"), width = 90, height = 22, units = "mm", dpi = 600, bg = "white")
+
+```
+

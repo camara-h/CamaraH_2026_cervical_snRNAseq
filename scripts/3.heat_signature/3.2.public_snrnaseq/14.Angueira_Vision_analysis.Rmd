@@ -1,0 +1,260 @@
+---
+title: "Emont HEAT Signature"
+output: html_document
+date: "2024-12-02"
+---
+
+The first part of the script is to load the packages that we're going to use.
+
+```{r setup, include=FALSE}
+pacman::p_load(SingleCellExperiment,
+               metap,
+               tradeSeq,
+               Seurat,
+               tidyverse, 
+               Matrix,
+               scales,
+               cowplot,
+               viridis,
+               VISION)
+```
+
+The main purpose of this script is to see how the data from Angueira et al. (2021) compares to our Neck Adipose Tissue dataset.
+
+The first part of this script reads in the Angueira dataset and subsets the dataset to look specifically at adipocytes.
+
+```{r read-data}
+
+angueira <- readRDS("../Data/PublishedSingleCellDatasets/Anguiera 2021/GSE166355_hPVAT.Integrated_annotated_merged_adipo_subset.RDS")
+
+UMAPPlot(angueira)
+
+Idents(angueira) = "cell_type"
+
+adipo = c("Adipocytes")
+angueira.adipo <- subset(angueira, idents = adipo)
+a = UMAPPlot(angueira.adipo)
+
+not.adipo = setdiff(unique(angueira$cell_type), adipo)
+angueira.notadipo <- subset(angueira, idents = not.adipo)
+b = UMAPPlot(angueira.notadipo)
+
+a / b
+
+```
+
+The next part is to rescale the data in accordance to what is recommended for the VISION workflow. Here the data is put into a separate object that is normalised called "scaled_counts". The UMAP projections are put into an object called "projection" and the associated metadata is put into "meta".
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- angueira@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- angueira@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = angueira@meta.data
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+```{r}
+
+Signatures="../Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/14.Angueira_Vision_analysis/VISION_angueira_HEAT.rds")
+# vis <- readRDS(file = "../Output/14.Angueira_Vision_analysis/VISION_angueira_HEAT.rds")
+
+```
+
+From this vision analysis we create a new dataset called "graph.data" that is joining the UMAP embeddings with the signature scores, the sample that it came from and the cell type that was previously identified in the object. The graph produced below looks at the signature scores graphed onto the UMAP embeddings. For this specific dataset, the comparisons between samples were chosen since there appeared to be substantially higher number of PPARGC1A+ cells in the second sample compared to the other two samples. Thus, this is a relatively useful tool for understanding the difference between more thermogenic adipocytes relative to others.
+
+```{r}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+sampletype <- angueira$orig.ident
+celltype <- angueira$cell_type_adipo_subset
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(sampletype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  gather(4:8, key = "Hallmark", value = "sigScores")
+
+ggplot(graph.data) + 
+  aes(x=UMAP_1, y=UMAP_2, color=sigScores) + 
+  geom_point(size = 0.5) +
+  scale_color_viridis() +
+  facet_grid(sampletype~Hallmark)
+
+```
+
+Next, we want to look at the differences in scores on a population level and compare them quantitatively between samples. In this graph we have boxplots overlayed on the datapoints to understand how different signature scores compare between different samples.
+
+```{r}
+
+ggplot(graph.data, aes(x = sampletype, y = sigScores, fill = sampletype)) +
+  geom_jitter(aes(color = sampletype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of Signature Scores by Cell Type" # Plot title
+  ) +
+  facet_grid(~Hallmark)
+
+```
+
+Finally, gene expression of PPARGC1A and EBF2 are used as markers to validate that hPVAT2 has the highest number of these more thermogenic adipocytes.
+
+```{r}
+# 
+# # Define the desired order of x-axis labels
+# desired_order <- c("Adipocytes_0", "Adipocytes_1", "Adipocytes_2", "Adipocytes_3", 
+#                    "Adipocytes_4", "Adipocytes_5")
+# 
+# # Set the levels of the cell identities to the desired order
+# angueira.adipo$cell_type_adipo_subset <- factor(Idents(angueira.adipo), levels = desired_order)
+
+# Create the violin plot
+Idents(angueira.adipo) = "orig.ident"
+VlnPlot(angueira.adipo, features = c("PPARGC1A", "EBF2"), stack = TRUE, flip = TRUE)
+FeaturePlot(angueira.adipo, features = "PPARGC1A", split.by = "orig.ident")
+FeaturePlot(angueira.adipo, features = "EBF2", split.by = "orig.ident")
+
+```
+
+The following chunk plots a panel of the signature score next to the UMAP plot with different clusters labelled.
+
+```{r fig.height = 6, fig.width = 12}
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=UMAP_1, y=UMAP_2, color=sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_gradient(low = "#FFF5F0", high = "#CB181D") +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Angueira et al 2021",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) 
+
+c <- DimPlot(angueira, reduction = "umap", group.by = "cell_type", label = TRUE, repel = TRUE) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Angueira et al 2021",
+    color = "Signature Scores"
+  ) + 
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) +
+  NoLegend()
+
+c + b
+
+
+```
+
+Finally, the below chunk exports this dataset as a csv file to be merged and used with other datasets.
+
+```{r}
+
+write.csv(graph.data, file = "../Output/14.Angueira_Vision_analysis/angueira_visionoutput.csv")
+
+```
+
+```{r}
+
+angueira.adipo <- FindVariableFeatures(angueira.adipo, selection.method = "vst", nfeatures = 2000)
+angueira.adipo <- ScaleData(angueira.adipo)
+angueira.adipo <- RunPCA(angueira.adipo, features = VariableFeatures(object = angueira.adipo)) 
+angueira.adipo <- FindNeighbors(angueira.adipo, dims = 1:10)
+angueira.adipo <- FindClusters(angueira.adipo, resolution = 0.5)
+
+angueira.adipo@meta.data
+
+Idents(angueira.adipo) = "RNA_snn_res.0.5"
+
+DimPlot(angueira.adipo, reduction = "umap")
+
+VlnPlot(angueira.adipo, features = "EBF2")
+
+View(angueira.adipo@meta.data %>% 
+  group_by(old.ident, RNA_snn_res.0.5) %>% 
+  summarise(n = n()))
+
+FeaturePlot(angueira.adipo, features = "EBF2", reduction = "pca")
+
+```

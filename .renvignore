@@ -1,0 +1,3 @@
+^not_used/
+^.*\.bak$
+^old_analysis/

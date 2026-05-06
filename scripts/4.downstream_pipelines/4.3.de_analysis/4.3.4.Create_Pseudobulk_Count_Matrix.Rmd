@@ -1,0 +1,145 @@
+---
+title: "Untitled"
+author: "Henrique"
+date: "2025-08-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(Seurat)
+library(ggplot2)
+library(ggpubr)
+library(stringr)
+library(tidyverse)
+library(patchwork)
+library(DGEobj.utils)
+
+
+# IO
+OUTPUT_DIR <- here("output/4.downstream_pipelines/de_analysis/data")
+dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
+
+HEATMAP_LOG_CPM_RDS <- here(OUTPUT_DIR, "CamaraH_pseudobulk_log_CPM_count_matrix_for_heatmap.rds")
+HEATMAP_METADATA_RDS <- here(OUTPUT_DIR, "CamaraH_metadata_for_heatmap.rds")
+HEATMAP_CTS_RDS <- here(OUTPUT_DIR, "CamaraH_pseudobulk_count_matrix_for_ggplot.rds")
+```
+
+```{r setup, include=FALSE}
+# ---- Libraries ----
+library(tidyverse)
+library(Seurat)
+library(DESeq2)
+library(DGEobj.utils)  # for convertCounts()
+library(pheatmap)
+library(RColorBrewer)
+library(patchwork)
+library(ggplot2)
+
+```
+
+```{r}
+# ---- Load Seurat object ----
+s.object <- readRDS(here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"))
+
+# Choose the metadata field for cell types
+cell_level <- "cell_type"  # change if needed
+```
+
+
+```{r}
+# ---- Pseudobulk raw counts: genes x (sample_cell_region) ----
+# Collect and format expression matrix
+cts <- AggregateExpression(s.object,
+  assays = "RNA",
+  slot = "counts", # Get the raw data and CPM it
+  return.seurat = F,
+  group.by = c(cell_level, "neck_region", "sample")
+)
+# Format cts. Generate sample_cell_region x gene matrix
+cts <- cts$RNA
+cts <- as.data.frame(cts)
+cts <- round(cts)
+# Convert to matrix
+cts_rownames <- rownames(cts)
+cts <- as.matrix(cts)
+rownames(cts) <- cts_rownames
+
+#Adjust names
+colnames(cts) <- gsub("-", "_", colnames(cts))
+```
+
+# --- Create visualizations ---
+```{r}
+# ---- (A) CPM counts: genes x (sample_cell_region) ----
+# Convert to CPMs for plotting
+CPM_mat <- convertCounts(
+  cts,
+  unit = "CPM",
+  log = FALSE,
+  normalize = "none",
+  prior.count = NULL
+)
+
+# Optional log for plotting (keeps zeros reasonable)
+CPM_log <- log1p(CPM_mat)  # natural log; use log10(1 + CPM) if you prefer
+saveRDS(CPM_log, HEATMAP_LOG_CPM_RDS)
+```
+
+# ---- Extract metadata ----
+```{r}
+# ---- Build column metadata for DESeq2 and annotations ----
+meta <- s.object@meta.data
+
+# Count the number of cells per condition
+n_cells_per_condition <- meta %>% count(!!sym(cell_level), neck_region, sample) %>%
+  rename("n_cells" = "n")
+
+# One row per (sample, cell_level, neck_region)
+df <- meta %>%
+  left_join(n_cells_per_condition, by =c(cell_level, "neck_region", "sample")) %>%
+  mutate(combined_name = paste(!!sym(cell_level), neck_region, sample, sep = "_")) %>%
+  distinct(combined_name, .keep_all = TRUE) %>%
+  mutate(across(everything(), ~ .),
+         combined_name = str_replace(combined_name,"-", "_")) %>%
+  remove_rownames() %>%
+  column_to_rownames("combined_name")
+
+
+
+# Keep only rows present in cts columns, and in same order
+df <- df[colnames(cts), , drop = FALSE]
+
+stopifnot(identical(rownames(df), colnames(cts)))
+
+# Create a simplified minimal df
+minimal_df <- df %>% select(sample, subject, neck_region, cell_type, cell_type_short, n_cells) %>%
+  mutate(color = palette.use[cell_type])
+sorted_subjects <- sort(unique(minimal_df$subject))
+subject_random_id <- setNames(as.character(1:length(sorted_subjects)), sorted_subjects)
+minimal_df$subject_random_id <- subject_random_id[match(minimal_df$subject, names(subject_random_id))]
+
+saveRDS(minimal_df, HEATMAP_METADATA_RDS)
+```
+
+
+# --- Create matrix for ggplot ----
+```{r}
+CPM_log_long <- as.data.frame(CPM_log) %>%
+  rownames_to_column(var = "gene") %>%  # keep rownames in a new column
+  pivot_longer(
+    cols = -gene,
+    names_to = "cell_type_neck_region_sample",
+    values_to = "cpm_log"
+  )
+
+merge_meta <- minimal_df %>% rownames_to_column(var = "cell_type_neck_region_sample")
+CPM_log_long <- left_join(CPM_log_long, merge_meta, by = "cell_type_neck_region_sample")
+
+head(CPM_log_long)
+
+saveRDS(CPM_log_long, HEATMAP_CTS_RDS)
+```
+
+
+
+

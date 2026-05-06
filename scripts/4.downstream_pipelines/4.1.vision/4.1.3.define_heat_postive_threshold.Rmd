@@ -1,0 +1,107 @@
+---
+title: "Extract VISION Signature Scores"
+output: html_document
+date: "2024-12-02"
+---
+
+# Introduction
+
+This notebook extracts UMAP coordinates, VISION signature scores, and
+Seurat metadata from saved VISION objects, then writes one merged score
+table per dataset.
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(tidyverse)
+library(readr)
+library(here)
+
+# -------------------------------------------------------------------------
+# Define inputs and outputs
+# -------------------------------------------------------------------------
+
+# Path to extracted Camarah SigScore
+INPUT_SIGSCORE_CAMARAH <- here("output", "4.downstream_pipelines", "vision", "data", "vision_signature_scores", "CamaraH_Dataset_VISION_sigScore.csv")
+
+
+# Output directory for extracted signature score tables
+OUTPUT_DIR <- here("output", "4.downstream_pipelines", "vision", "data", "heat_threshold")
+dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
+
+# Define threshold
+THRESHOLD <- 0.99 # 99% of WAds are considered HEAT-negative
+```
+
+# Load signature file
+```{r}
+camarah_sigscores <- read_csv(INPUT_SIGSCORE_CAMARAH, col_types = "cddcccccdccc")
+```
+
+```{r}
+# Filter HEAT scores for CamaraH white adipocytes
+wad_df <- camarah_sigscores %>%
+  filter(
+    cell_type == "White Adipocytes",
+    Hallmark == "HEAT"
+  ) %>%
+  filter(!is.na(sigScores)) %>%
+  distinct(barcode, .keep_all = TRUE)
+
+# Summary statistics
+wad_HEAT_summary <- wad_df %>%
+  summarise(
+    n_cells = n(),
+    mean = mean(sigScores),
+    sd = sd(sigScores),
+    median = median(sigScores),
+    iqr = IQR(sigScores),
+    min = min(sigScores),
+    q95 = quantile(sigScores, 0.95),
+    q975 = quantile(sigScores, 0.975),
+    q99 = quantile(sigScores, 0.99),
+    max = max(sigScores)
+  )
+
+# Define 99th percentile threshold
+wad_HEAT_threshold <- quantile(wad_df$sigScores, probs = THRESHOLD, na.rm = TRUE)
+
+# Write outputs
+write_csv(
+  wad_HEAT_summary,
+  file.path(OUTPUT_DIR, "CamaraH_WAd_HEAT_threshold_summary.csv")
+)
+
+saveRDS(
+  wad_HEAT_threshold, 
+  file.path(OUTPUT_DIR, "wad_heat_threshold.rds")
+  )
+```
+
+```{r}
+#Count HEAT+ percentage
+heat_pos_count <- camarah_sigscores %>%
+  filter(
+    Hallmark == "HEAT"
+  ) %>%
+  filter(!is.na(sigScores)) %>%
+  distinct(barcode, .keep_all = TRUE) |> group_by(cell_type) |> 
+  count("heat_positive" = sigScores > wad_HEAT_threshold) |> 
+  mutate(n_pct = round(n/sum(n)*100,1))
+heat_pos_count
+
+# Write outputs
+write_csv(
+  heat_pos_count,
+  file.path(OUTPUT_DIR, "CamaraH_HEAT_positive_cell_count.csv")
+)
+```
+
+```{r}
+# Save session info
+sink(file.path(OUTPUT_DIR, "sessionInfo_HEAT_threshold.txt"))
+sessionInfo()
+sink()
+```
+

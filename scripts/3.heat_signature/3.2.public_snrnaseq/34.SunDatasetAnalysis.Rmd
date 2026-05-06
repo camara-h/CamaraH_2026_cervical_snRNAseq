@@ -1,0 +1,241 @@
+---
+title: "Sun_dataset_analysis"
+output: html_document
+date: "2025-03-26"
+---
+
+```{r setup, include=FALSE}
+
+pacman::p_load(SingleCellExperiment,
+               metap,
+               tradeSeq,
+               Seurat,
+               tidyverse, 
+               Matrix,
+               scales,
+               cowplot,
+               viridis,
+               VISION)
+
+```
+
+
+```{r }
+
+setwd("/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data")
+
+load("../Data/PublishedSingleCellDatasets/Sun 2020/seurat_object.rdata")
+
+```
+
+``` {r}
+
+UMAPPlot(integrated, label = TRUE)
+FeaturePlot(integrated, features = "PLIN1")
+FeaturePlot(integrated, features = "EBF2")
+FeaturePlot(integrated, features = "ADIPOQ")
+FeaturePlot(integrated, features = "PDGFRA")
+FeaturePlot(integrated, features = "CKMT2")
+FeaturePlot(integrated, features = "PPARGC1A")
+FeaturePlot(integrated, features = "percent.mt", max.cutoff = 10)
+
+features = c("ADIPOQ","PDGFRA", "DCN", "MYOCD", "ADGRF5", "JAM2", "STEAP4", "PKHD1L1", "CDH19", "MPZ",  "CARD11", "CD163", "CPA3", "CSF3R", "CNTNAP2", "MSLN", "PRLR", "NRXN1", "SHANK3", "PROX1", "IL7R", "MS4A1", "CDH19", "PTH", "COL1A1")
+
+VlnPlot(integrated, 
+        features = features, 
+        stack = TRUE, 
+        flip = TRUE, 
+        group.by = "seurat_clusters") + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm"))
+
+```
+
+``` {r}
+
+a = c("GHR", "ACACB", "SLC19A3", "PCDH9", "DMD")
+b = c("ABCA10", "NEGR1", "LAMA2", "ABCA9", "DCN")
+c = c("FAM155A", "LDB2", "PTPRB", "TMTC1", "VWF")
+d = c("PKHD1L1", "FLRT2", "NRG3", "PDE1A", "PPFIBP1")
+e = c("STAT4", "TPT1", "RPS12", "RPL12", "RPL32")
+f = c("KIAA1217", "PRKG1", "DLG2", "FRMD4B", "KCNMA1")
+g = c("FRMD4B", "KCNMA1", "CD163L1", "LGMN", "RBM47")
+h = c("LSAMP", "LPAR1", "TMEM178B", "CALD1", "ARI3BP")
+i = c("BCL11A", "MEF2C", "ADAM28")
+j = c("MYH11", "KCNAB1", "RGS6", "ITGA8", "MYL9")
+k = c("GPC5", "LAMP3", "WNT5B", "FLT3")
+
+sets = c(a, b, c, d, e, f)
+
+for (set in sets) {
+  VlnPlot(integrated, 
+          features = g, 
+          stack = TRUE, 
+          flip = TRUE, 
+          group.by = "seurat_clusters") + 
+    NoLegend() +
+    theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm"))
+}
+
+```
+
+0 = CD4+ T Cells
+1 = CD4+ T Cells
+2 = Adipocytes
+3 = Preads
+4 = B Cells
+6 = Dendritic Cells
+7 = Macrophages
+9 = Endothelial Cells 2
+10 = Endothelial Cells 1
+11 = Fibroblasts
+12 = CD4+ T Cells
+
+
+``` {r}
+
+integrated@meta.data <- integrated@meta.data %>% 
+  mutate(cell.id = ifelse(seurat_clusters %in% c(0, 6), "T Cells",
+                          ifelse(seurat_clusters %in% c(1, 8), "Lymphoid Cells",
+                                 ifelse(seurat_clusters == 2, "Adipocytes",
+                                        ifelse(seurat_clusters == 3, "Adipocyte Progenitor Cells",
+                                               ifelse(seurat_clusters == 4, "B Cells",
+                                                      ifelse(seurat_clusters == 7, "Neutrophils",
+                                                             ifelse(seurat_clusters == 9, "Lymphatic Endothelial Cells",
+                                                                    ifelse(seurat_clusters == 10, "Endothelial Cells", "Unknown")))))))))
+
+
+```
+
+0 - Lymphoid Cells (T Cells)
+1 - Lymphoid Cells (T or B Cells)
+2 - Adipocytes
+3 - Adipocyte Progenitor Cells
+4 - Lymphoid Cells (B Cells)
+5
+6 - Lymphoid Cells (T Cells)
+7 - Neutrophils
+8 - Lymphoid Cells (T or B Cells)
+9 - Lymphatic Endothelial Cells
+10 - Endothelial Cells
+11
+12
+
+The next part is to rescale the data in accordance to what is recommended for the VISION workflow. Here the data is put into a separate object that is normalised called "scaled_counts". The UMAP projections are put into an object called "projection" and the associated metadata is put into "meta".
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- integrated@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- integrated@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = integrated@meta.data
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+```{r}
+
+Signatures="../Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject//Output/Sun_Dataset_analysis/VISION_Sun_HEAT.rds")
+# vis <- readRDS(file = "../Output/17.Efthymiou_dataset_analysis/VISION_efthymiou_HEAT.rds")
+
+```
+
+
+```{r }
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+ gather(4:8, key = "Hallmark", value = "sigScores")
+
+```
+
+```{r fig.height = 6, fig.width = 12}
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=umap_1, y=umap_2, color=sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_gradient(low = "#FFF5F0", high = "#CB181D") +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Sun et al 2020",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) 
+
+c <- DimPlot(integrated, reduction = "umap", group.by = "cell.id", label = TRUE, repel = TRUE) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Sun et al 2020",
+    color = "Signature Scores"
+  ) + 
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) +
+  NoLegend()
+
+c + b
+
+```
+```

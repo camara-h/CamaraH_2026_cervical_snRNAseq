@@ -1,0 +1,24 @@
+name: mebocost-compass
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - seaborn
+  - scanpy
+  - anndata
+  - jupyterlab
+  - notebook
+  - ipykernel
+  - tqdm
+  - scikit-learn
+  - openpyxl
+  - pip:
+      - git+https://github.com/kaifuchenlab/MEBOCOST.git
+      - git+https://github.com/YosefLab/Compass.git

@@ -1,0 +1,1760 @@
+---
+title: "Emont HEAT Signature"
+output: html_document
+date: "2024-12-02"
+---
+
+The first part of the script is to load the packages that we're going to use.
+
+```{r setup, include=FALSE}
+pacman::p_load(SingleCellExperiment,
+               metap,
+               tradeSeq,
+               Seurat,
+               tidyverse, 
+               Matrix,
+               scales,
+               cowplot,
+               viridis,
+               VISION,
+               ggpmisc)
+```
+
+The main purpose of this script is to see how the data from Efthymiou et al. (2025) compares to our Neck Adipose Tissue dataset. Here we'll use VISION to determine signature scores between clusters to see whether this HEAT signature is a good marker for thermogenic adipocytes broadly or whether it would be more specific to neck adipocytes.
+
+The first part of this script reads in the emont dataset and subsets the dataset to look specifically at adipocytes.
+
+```{r read-data}
+
+#s.object <- readRDS("../Data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_modified_cleaned.rds")
+
+#s.object <- readRDS("/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_modified_cleaned.rds")
+
+UMAPPlot(s.object)
+# 
+# Idents(s.object) = "cell_type"
+# s.object <- subset(s.object, idents = c("Adipocyte_1", "Brown_Adipocyte"))
+
+```
+
+The next part is to rescale the data in accordance to what is recommended for the VISION workflow. Here the data is put into a separate object that is normalised called "scaled_counts". The UMAP projections are put into an object called "projection" and the associated metadata is put into "meta".
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- s.object@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- s.object@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = s.object@meta.data[1:6]
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+``` {r}
+
+Signatures="/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/superficial_adipocyte.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+# vis <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+
+```
+
+From this vision analysis we create a new dataset called "graph.data" that is joining the UMAP embeddings witht he signature scores, the sample type (type of adipose tissue probed) and the cell type that was previously identified in the object. The graph produced below is faceting for the different signature scores.
+
+``` {r fig.width = 16, fig.height = 4}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+sampletype <- s.object$neck_region
+celltype <- s.object$cell_type
+subject <- s.object$subject
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(sampletype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(subject) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+ gather(4:8, key = "Hallmark", value = "sigScores") %>% 
+  filter(celltype %in% c("Adipocyte_1","Adipocyte_2","Brown_Adipocyte"))
+
+ggplot(graph.data) + 
+  aes(x=umap_1, y=umap_2, color=sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(option = "plasma",
+                      limits = c(-0.3,2.6)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_grid(~Hallmark)
+
+```
+
+Following this, we get a graph where we plot the signature scores by the adipocyte subtype described in this paper.
+
+``` {r}
+
+hallmarks = unique(graph.data$Hallmark)
+
+for (hallmark in hallmarks) {
+
+a <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == hallmark), 
+       aes(x = celltype, y = sigScores, fill = sampletype)) +
+  geom_jitter(aes(color = sampletype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 10, face = "bold", 
+                               hjust = 1, 
+                               angle = 45, 
+                               vjust = -1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of Signature Scores by Cell Type" # Plot title
+  ) 
+print(a)
+}
+```
+
+#### Figure comparing signature scores and gene expression
+
+In the below panel, the goal is to compare the gene signature scores (Adipogenesis Hallmark, Fatty Acid Metabolism Hallmark, Oxidative Phosphorylation Hallmark, BATLAS signature score, and the HEAT signature score) between each other and with gene markers of brown adipocytes (EBF2, PPARGC1A, UCP1)
+
+
+``` {r}
+
+VlnPlot(s.object, 
+        features = c("PPARGC1A", "EBF2"),  
+        stack = TRUE, 
+        flip = TRUE)
+
+```
+
+Finally, the below chunk exports this dataset as a csv file to be merged and used with other datasets.
+
+```{r}
+
+write.csv(graph.data, file = "../Output/18.NeckAdipose_dataset_analysis/neck_visionoutput.csv")
+
+```
+
+### Sean Data Exploration
+
+```{r}
+
+Idents(s.object) = "cell_type_group"
+
+UMAPPlot(s.object, label = TRUE) + NoLegend()
+
+```
+
+In the below script, we wanted to see how canonical adipocyte genes were expressed in the white adipocyte vs. the brown adipocyte clusters. Primarily, we would expect that a lot of canonical markers would be expressed like ADIPOQ and PNPLA2 (ATGL).
+
+```{r}
+
+Idents(s.object) = "cell_type_group"
+
+VlnPlot(s.object, 
+        features = c("ADIPOQ", "PLIN1", "DGAT1", "LIPE", "CIDEA", "CIDEC", "MGLL", "PNPLA2", "PLIN4", "FABP4", "DGAT2"),
+        flip = TRUE,
+        stack = TRUE) + 
+  NoLegend()
+
+VlnPlot(s.object, 
+        features = c("PLIN4", "FABP4", "DGAT2"),
+        flip = TRUE,
+        stack = TRUE) + 
+  NoLegend()
+
+
+```
+
+A major conclusion from the above figure is that a number of the canonical markers that are expressed in the brown adipocytes (ADIPOQ, PLIN1, DGAT, LIPE, CIDEA, CIDEC, and PNPLA2) and some that are generally not (PLIN4, FABP4, and DGAT2).
+
+This following chunk is intended to look at the specificity and the overall intensity of gene expression for the HEAT signature markers in brown adipocyte compared to white adipocytes.
+
+```{r}
+
+VlnPlot(s.object, 
+        features = c("PPARGC1A", "CLSTN3", "CKMT2", "BDH1", "ACOT11", "GK", "INSIG1", "COBL", "NDUFB9", "AFG3L2", "HAVCR2", "IVD", "SDHB", "DECR1", "STS", "SGK2", "ACO2", "HADHA", "EFR3B", "CS", "NDUFS1", "UGT1A7"),
+        flip = TRUE,
+        stack = TRUE) + 
+  NoLegend()
+
+FeaturePlot(s.object, features = "UCP1")
+FeaturePlot(s.object, features = "PPARGC1A")
+FeaturePlot(s.object, features = "COBL")
+FeaturePlot(s.object, features = "CKMT2")
+FeaturePlot(s.object, features = "CA12")
+FeaturePlot(s.object, features = "CLSTN3")
+FeaturePlot(s.object, features = "BDH1")
+FeaturePlot(s.object, features = "ACOT11")
+FeaturePlot(s.object, features = "GK")
+FeaturePlot(s.object, features = "SGK2")
+FeaturePlot(s.object, features = "DECR1")
+FeaturePlot(s.object, features = "NDUFS1")
+FeaturePlot(s.object, features = "CS")
+FeaturePlot(s.object, features = "EFR3B")
+FeaturePlot(s.object, features = "HADHA")
+FeaturePlot(s.object, features = "ACO2")
+FeaturePlot(s.object, features = "STS")
+FeaturePlot(s.object, features = "SDHB")
+FeaturePlot(s.object, features = "IVD")
+FeaturePlot(s.object, features = "HAVCR2")
+FeaturePlot(s.object, features = "AFG3L2")
+FeaturePlot(s.object, features = "NDUFB9")
+FeaturePlot(s.object, features = "INSIG1")
+
+# NDUFS1, CS, EFR3B, HADHA, ACO2, SGK2, STS, DECR1, SDHB, IVD, HAVCR2, AFG3L2, NDUFB9
+
+# SGK2, DECR1 look at deep vs. superficial neck adipose tissue
+
+# Particularly good markers: PPARGC1A, CLSTN3, CKMT2, BDH1, ACOT11, GK, CA12
+
+# INSIG1 seems good but has some signal in macrophages. COBL seems good but has some signal in Neuron Associated 2 cels
+
+```
+
+Note that the markers that were expressed for the most part were pretty selective for brown adipocytes. The exceptions are COBL which has some expression in Neuron_associated_2 cells and INSIG1 which has some expression in macrophages.
+
+Below some of these markers are checked in the main adipocyte cluster while comparing between the deep neck and superficial neck samples. There might be a slight increase in expression for the deep neck vs. the superficial neck samples but it's not particularly conclusive.
+
+```{r}
+
+Idents(s.object) = "cell_type"
+VlnPlot(subset(s.object, idents = "Adipocyte_1"),
+        features = c("SGK2","DECR1", "PPARGC1A", "CS", "AFG3L2", "HADHA","ACO2"),
+        stack = TRUE,
+        flip = TRUE,
+        split.by = "neck_region")
+
+```
+
+Next, some of the markers that were identified in Huang et al. 2022 as genes more highly expressed in earlier progenitors of intrascapular brown adipocytes. Here, expression of these markers are compared in superficial vs. deep neck regions. The purpose of looking at these genes is to determine if there could be selective markers for more brown adipocyte-related progenitors compared to more white adipocyte progenitors.
+
+```{r}
+
+Idents(s.object) = "cell_type"
+VlnPlot(subset(s.object, idents = "APC"),
+        features = c("FSTL1","MFAP4","FBN1","CILP","GPC3","POSTN","FBLN5","DLK1", "THY1","PDGFRA"),
+        stack = TRUE,
+        flip = TRUE,
+        split.by = "neck_region")
+
+VlnPlot(subset(s.object, idents = "APC"),
+        features = c("FSTL1", "FBN1","FBLN5","PDGFRA"),
+        stack = TRUE,
+        flip = TRUE,
+        split.by = "neck_region")
+
+VlnPlot(subset(s.object, idents = "APC"),
+        features = c("FSTL1", "MFAP4","FBN1","CILP","FBLN5"),
+        stack = TRUE,
+        flip = TRUE,
+        split.by = "neck_region")
+
+VlnPlot(subset(s.object, idents = "APC"),
+        features = c("MFAP4"),
+        split.by = "neck_region")
+
+FeaturePlot(s.object, features = c("FBN1"), split.by = "neck_region")
+FeaturePlot(s.object, features = c("FSTL1"), split.by = "neck_region")
+FeaturePlot(s.object, features = c("FBLN5"), split.by = "neck_region")
+FeaturePlot(s.object, features = c("MFAP4"), split.by = "neck_region")
+FeaturePlot(s.object, features = c("CILP"), split.by = "neck_region")
+FeaturePlot(s.object, features = c("PDGFRA"), split.by = "neck_region")
+
+Idents(s.object) = "neck_region"
+FindMarkers(s.object, ident.1 = "Deep", ident.2 = "Superficial", features = c("FBN1", "FSTL1", "FBLN5", "MFAP4", "CILP", "PDGFRA"))
+
+```
+
+```{r}
+
+Idents(s.object) = "cell_type"
+UMAPPlot(s.object, label = TRUE, repel = TRUE) + NoLegend()
+
+Idents(s.object) = "cell_type_res.1.6"
+UMAPPlot(s.object, label = TRUE, repel = TRUE) + NoLegend()
+
+Idents(s.object) = "cell_type_scVI_subset"
+UMAPPlot(s.object, label = TRUE, repel = TRUE) + NoLegend()
+
+Idents(s.object) = "cell_type_subset"
+UMAPPlot(s.object, label = TRUE, repel = TRUE) + NoLegend()
+
+```
+
+### Comparison of markers in literature
+
+The purpose of this chunk is to explore the markers used in the literature as a means to justify the annotation of specific clusters.
+
+```{r}
+
+s.object$cell_type_group <- factor(x = s.object$cell_type_group, 
+                                   levels = c("Brown_adipocyte", "White_adipocyte", "Macrophage_ADIPOQ_pos", "Smooth_muscle_ADIPOQ_pos", "PreAdipocyte", "ASPC", "Mesenchymal", "Endothelial_arterial", "Endothelial_venous", "Endothelial_capillary", "Lymphatic_endothelial", "Pericyte", "Smooth_muscle", "Macrophage", "Mast", "T_Lymphocyte", "B_Lymphocyte", "Neutrophil", "Schwann", "Neuron_associated_1", "Neuron_associated_2", "PRM1_pos"))
+
+```
+
+#### Whytock 2024
+
+```{r}
+
+VlnPlot(s.object, 
+        features = c("ADIPOQ", "ZNF423", "PDGFRA", "PECAM1", "CD86", "ENPP3"),
+        flip = TRUE,
+        stack = TRUE,
+        group.by = "cell_type_group") + 
+  NoLegend()
+
+```
+
+```{r, fig.height = 9, fig.width = 6}
+
+DotPlot(s.object,
+        features = c(
+                     "ZNF423", "NRXN3", "CTNNA2", "PTPRD", "CNTNAP2", "RBFOX1",  
+                     "ENPP3", "TPSAB1", "MS4A2", "TPSB2", "KIT", "HDC", 
+                     "CD86", "MRC1", "FRMD4B", "F13A1", "HLA-DRA", "MS4A6A", 
+                     "PECAM1", "RGS5", "RBP7", "SPARCL1", "BTNL9", "VWF", 
+                     "PDGFRA", "C1S", "COL1A2", "LUM", "C3", "DCN",  
+                     "ADIPOQ", "SAA1", "RARRES2", "GPX1", "PLIN4", "GPX4",
+                     "EBF1", "WDPCP", "DDX5", "OGA", "PDE3B"
+                     ),
+        group.by = "cell_type_group") +
+  coord_flip() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  NoLegend()
+
+```
+
+#### Emont 2022
+
+```{r}
+
+VlnPlot(s.object, 
+        features = c("ADIPOQ", "PDGFRA", "JAM2", "PROX1", "STEAP4", "MYOCD", "CYBB", "CPA3", "IL7R", "MS4A1", "KLRD1", "CSF3R", "FLT3"),
+        flip = TRUE,
+        stack = TRUE,
+        group.by = "cell_type_group") + 
+  NoLegend()
+
+```
+
+Here, CYBB is not a very good marker for macrophages since there seems to be some spillover in the Neutrophils and B lymphocytes.
+
+#### Reinisch 2024
+
+Look at markers from Reinisch et al 2024. In this paper they were looking at and comparing the visceral and subcutaneous adipose tissue depots between metabolically healthy vs. unhealthy individuals. They found a number of progenitor populations, some which were specific to tissue source.
+
+Below is a violin plot of our object with a combination of markers used for both subcutaneous and visceral adipose tissue.
+
+```{r}
+
+VlnPlot(s.object, 
+        features = c("ADIPOQ", "PDGFRA", "JAM2", "SHANK3", "PROX1", "ELF3", "STEAP4", "MYOCD", "CD163", "MS4A4A", "ITGAX", "IL7R", "MS4A1", "NRXN1"),
+        flip = TRUE,
+        stack = TRUE,
+        group.by = "cell_type_group") + 
+  NoLegend()
+
+```
+
+In this paper they describe a number of adipose progenitor populations with a range of commitment levels. Here those genes are plotted on the neck adipose object.
+
+Note that the first anti-adipogenic population is described in Merrick 2019 as well as the less committed DPP4+ cells.
+
+```{r}
+
+Idents(s.object) = "cell_type_group"
+aspc <- subset(x = s.object, idents = c("ASPC", "PreAdipocyte"))
+
+# Committed pre-adipocyte population 1
+FeaturePlot(aspc, features = c("PPARG"))
+FeaturePlot(aspc, features = c("CD36"))
+FeaturePlot(aspc, features = c("LMO3"))
+FeaturePlot(aspc, features = c("F3"))
+FeaturePlot(aspc, features = c("BOC"))
+
+# Committed pre-adipocyte population 2
+FeaturePlot(aspc, features = c("ICAM1"))
+FeaturePlot(aspc, features = c("LDLR"))
+FeaturePlot(aspc, features = c("CTSL"))
+FeaturePlot(aspc, features = c("MEDAG"))
+
+# Fibroadipogenic progenitor
+#FeaturePlot(aspc, features = c("P16"))
+FeaturePlot(aspc, features = c("CD55"))
+FeaturePlot(aspc, features = c("CD34"))
+FeaturePlot(aspc, features = c("MFAP5"))
+FeaturePlot(aspc, features = c("DPP4"))
+
+# Anti-adipogenic progenitor population 1
+FeaturePlot(aspc, features = c("MEOX2"))
+FeaturePlot(aspc, features = c("ERBB4"))
+FeaturePlot(aspc, features = c("EPHA3"))
+
+# Anti-adipogenic progenitor population 2
+FeaturePlot(aspc, features = c("ZNF804B"))
+FeaturePlot(aspc, features = c("SORCS1"))
+FeaturePlot(aspc, features = c("IL15"))
+FeaturePlot(aspc, features = c("CCL21"))
+#FeaturePlot(aspc, features = c("B GRIA4"))
+
+```
+
+```{r}
+
+VlnPlot(s.object, 
+        features = c("ADIPOQ", "PDGFRA", "JAM2", "SHANK3", "PROX1", "ELF3", "STEAP4", "MYOCD", "CD163", "MS4A4A", "ITGAX", "IL7R", "MS4A1", "NRXN1"),
+        flip = TRUE,
+        stack = TRUE,
+        group.by = "cell_type_group") + 
+  NoLegend()
+
+FeaturePlot(s.object, features = "DCN")
+FeaturePlot(s.object, features = "CD34")
+
+FindMarkers(s.object, ident.1 = "Mesenchymal")
+FindMarkers(s.object, ident.1 = "Schwann")
+
+unique(Idents(s.object))
+
+```
+
+### Analysis of macrophage subtypes
+
+This code should eventually be moved into a separate notebook. The intention is to look at the macrophage cluster and determine whether it can be broken up into separate macrophage subtypes. Well described markers of M1 and M2 macrophages are available in the literature. These macrophage markers are used here to determine whether different subtypes are available and whether populations of these subtypes are differentiallly available in the deep vs. superficial neck fat.
+
+```{r}
+
+Idents(s.object) = "cell_type"
+UMAPPlot(s.object)
+
+# M1 markers as defined by Origene (https://www.origene.com/research-areas/m1-and-m2-macrophage-markers)
+
+VlnPlot(s.object,
+        features = c("CD86", "CD80", "CD68", "IL1R1", "NOS2",  "TLR2", "TLR4", "SOCS3"),
+        stack = TRUE,
+        flip = TRUE)
+
+# Genes in the MHCII complex
+VlnPlot(s.object,
+        features = c("HLA-DP", "HLA-DM", "HLA-DOA", "HLA-DOB", "HLA-DQ", "HLA-DR"),
+        stack = TRUE,
+        flip = TRUE)
+
+VlnPlot(s.object,
+        features = c("TNF", "IL1A", "IL1B", "IL6", "IL12", "IL23"),
+        stack = TRUE,
+        flip = TRUE)
+
+VlnPlot(s.object,
+        features = c("CCL10", "CCL11", "CCL5", "CCL8", "CCL16", "CCL9", "CCL2", "CCL3", "CCL4"),
+        stack = TRUE,
+        flip = TRUE)
+
+FeaturePlot(subset(s.object, idents = "Macrophage"), features = c("TLR2"))
+FeaturePlot(subset(s.object, idents = "Macrophage"), features = c("TLR4"))
+FeaturePlot(subset(s.object, idents = "Macrophage"), features = c("CD86"))
+
+# M2a markers as defined by Origene (https://www.origene.com/research-areas/m1-and-m2-macrophage-markers)
+
+VlnPlot(s.object,
+        features = c("SR", "MRC1",  "CD163", "CD200R1", "TGM2", "TNFRSF6B", "IL1R2", "RETNLB", "ARG1"),
+        stack = TRUE,
+        flip = TRUE)
+
+FeaturePlot(subset(s.object, idents = "Macrophage"), features = c("CD163"))
+FeaturePlot(subset(s.object, idents = "Macrophage"), features = c("MRC1"))
+
+
+```
+
+From this characterisation, it looks like most markers described are not abundantly expressed in this dataset. However, there are a couple of markers each for the M1 and M2 phenotypes that seem to marker the bottom portion as more likely to be M1 and the top portion as M2. In this next chunk, the macrophage cluster is subsetted and re-clustered at a higher resolution to see if those two sets can be resolved in a way that make sense.
+
+```{r}
+
+s.object.mac = subset(s.object, idents = "Macrophage")
+
+s.object.mac=FindNeighbors(s.object.mac,dims = 1:20)
+s.object.mac=FindClusters(s.object.mac,resolution = 0.1)
+UMAPPlot(s.object.mac,label=T)
+
+VlnPlot(s.object.mac,
+        features = c("TLR2", "TLR4", "CD86", "CD163", "MRC1", "TREM2", "LIPA", "CTSD"),
+        stack = TRUE,
+        flip = TRUE)
+
+```
+
+```{r}
+
+UMAPPlot(s.object.mac,label=T, split.by = "neck_region")
+
+```
+
+```{r}
+
+Idents(s.object) = "cell_type_group"
+s.object.mac2 <- subset(s.object, idents = c("Macrophage", "Macrophage_ADIPOQ_pos"))
+
+```
+
+```{r}
+
+
+FeaturePlot(s.object.mac2, features = c("F13A1"))
+FeaturePlot(s.object.mac2, features = c("TREM2"))
+FeaturePlot(s.object.mac2, features = c("LIPA"))
+FeaturePlot(s.object.mac2, features = c("GPNMB"))
+DotPlot(s.object, features = c("GPNMB", "CD36", "TREM2", "APOC1", "LIPA", "APOE", "FABP5", "CTSD", "PLA2G7", "CHIT1", "FABP4", "MMP9")) + NoLegend()
+Gpnmb
+GPNMB
+FeaturePlot(s.object, features = c("CXCL14"))
+
+
+```
+
+### Neuron Associated 2 Cells As Parathyroid Associated Cells
+
+```{r}
+
+Idents(s.object) = "cell_type_group"
+
+parathyroid <- FindMarkers(s.object, ident.1 = "Neuron_associated_2")
+
+head(parathyroid, n = 10)
+
+FeaturePlot(s.object, features = c("CASR"))
+
+```
+
+Highest genes include CASR (Ca++ sensing receptor found in parathyroid gland), DNAH11, and SYCP2L. Given the parathyroid is located in the deep neck region and this cluster is only found in the deep neck region, it seems plausible this cluster is related to the parathyroid gland.
+
+The canonical gene for the parathyroid gland should be parathyroid hormone PTH. In the below chunk, we observe that PTH is selectively expressed in this cluster.
+
+```{r}
+
+FeaturePlot(s.object, features = c("PTH"))
+
+```
+
+Thus, we proposed these cells are parathyroid associated cells
+
+### Mesenchymal Stem Cells
+
+```{r}
+
+
+Idents(s.object) = "cell_type_group"
+
+msc <- FindMarkers(s.object, ident.1 = "Mesenchymal")
+
+msc <- msc[order(msc$pct.2, decreasing = FALSE),]
+
+head((msc %>% 
+       dplyr::filter(pct.1 > 0.1)), n = 40)
+
+FeaturePlot(s.object, feature = "AC116345.1")
+FeaturePlot(s.object, feature = "CLDN1")
+FeaturePlot(s.object, feature = "PTGDS")
+FeaturePlot(s.object, feature = "KLF5")
+FeaturePlot(s.object, feature = "SCN7A")
+
+FeaturePlot(s.object, feature = "CSRP1")
+FeaturePlot(s.object, feature = "SLC2A1")
+FeaturePlot(s.object, feature = "FABP7")
+
+
+```
+
+### Modifying labels for aesthetic and accuracy
+
+```{r, fig.width = 10, fig.height = 8}
+
+metadata <- s.object@meta.data 
+
+metadata$cell_type_sk <- NA
+
+metadata$cell_type_sk[which(metadata$cell_type_group=="Brown_adipocyte")] <- "Brown Adipocytes"
+metadata$cell_type_sk[which(metadata$cell_type_group=="White_adipocyte")] <- "White Adipocytes"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Macrophage_ADIPOQ_pos")] <- "Lipid Associated Macrophages"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Smooth_muscle_ADIPOQ_pos")] <- "ADIPOQ+ Smooth Muscle Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="PreAdipocyte")] <- "Pre-adipocytes"
+metadata$cell_type_sk[which(metadata$cell_type_group=="ASPC")] <- "Adipocyte Progenitor Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Mesenchymal")] <- "Mesenchymal Stem Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Endothelial_arterial")] <- "Arterial Endothelial Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Endothelial_venous")] <- "Venous Endothelial Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Endothelial_capillary")] <- "Capillary Endothelial Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Lymphatic_endothelial")] <- "Lymphatic Endothelial Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Pericyte")] <- "Pericytes"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Smooth_muscle")] <- "Smooth Muscle Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Macrophage")] <- "Macrophages"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Mast")] <- "Mast Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="T_Lymphocyte")] <- "T Lymphocytes"
+metadata$cell_type_sk[which(metadata$cell_type_group=="B_Lymphocyte")] <- "B Lymphocytes"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Neutrophil")] <- "Neutrophils"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Schwann")] <- "Schwann Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Neuron_associated_1")] <- "Neuron Associated Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="Neuron_associated_2")] <- "Parathyroid Associated Cells"
+metadata$cell_type_sk[which(metadata$cell_type_group=="PRM1_pos")] <- "PRM1+ Cells"
+
+s.object@meta.data <- metadata
+
+DimPlot(s.object, 
+        reduction = "umap", 
+        group.by = "cell_type_sk",
+        label = TRUE, 
+        label.size = 5,
+        repel = TRUE) + 
+  labs(x = "UMAP 1", y = "UMAP 2") +  # Change axis titles
+  theme(
+    axis.title = element_text(size = 16),  # Axis title size
+    axis.text = element_text(size = 14),   # Axis tick label size
+    legend.text = element_text(size = 12), # Legend text size
+    plot.title = element_blank(),          # Remove the plot title
+    panel.grid.major = element_blank(),    # Remove major grid lines
+    panel.grid.minor = element_blank(),    # Remove minor grid lines
+    panel.background = element_blank(),    # Remove background
+    axis.line = element_line(size = 1, color = "black")  # Add axis lines
+  ) +
+  NoLegend()
+
+  
+unique(s.object$cell_type_sk)
+```
+
+```{r, fig.width = 10, fig.height = 6}
+
+DimPlot(s.object, 
+        reduction = "umap", 
+        group.by = "cell_type_sk",
+        label = FALSE, 
+        label.size = 5,
+        split.by = "neck_region") + 
+  labs(x = "UMAP 1", y = "UMAP 2") +  # Change axis titles
+  theme(
+    axis.title = element_blank(),  # Axis title size
+    axis.text = element_blank(),   # Axis tick label size
+    axis.ticks = element_blank(),
+    legend.text = element_text(size = 12), # Legend text size
+    plot.title = element_blank(),          # Remove the plot title
+    panel.grid.major = element_blank(),    # Remove major grid lines
+    panel.grid.minor = element_blank(),    # Remove minor grid lines
+    panel.background = element_blank(),    # Remove background
+    axis.line = element_blank(),  # Add axis lines
+    strip.text = element_text(size = 18, face = "plain")
+  ) +
+  NoLegend()
+
+
+```
+
+### Violin Plot
+
+```{r, fig.height = 6, fig.width = 8}
+
+cell_levels <- c("Brown Adipocytes", "White Adipocytes", "Pre-adipocytes", "Adipocyte Progenitor Cells", "Mesenchymal Stem Cells", "Arterial Endothelial Cells", "Capillary Endothelial Cells", "Venous Endothelial Cells", "Lymphatic Endothelial Cells", "Pericytes", "Smooth Muscle Cells", "ADIPOQ+ Smooth Muscle Cells", "Macrophages", "Lipid Associated Macrophages", "Mast Cells", "T Lymphocytes", "B Lymphocytes", "Neutrophils", "Schwann Cells", "Neuron Associated Cells", "Parathyroid Associated Cells", "PRM1+ Cells")
+
+s.object@meta.data$cell_type_sk <- factor(x = s.object@meta.data$cell_type_sk, levels = cell_levels)
+
+VlnPlot(s.object, 
+        features = c("ADIPOQ", "PDGFRA", "DCN", "JAM2","SHANK3", "PROX1", "STEAP4", "MYOCD", "CD163", "CPA3", "IL7R", "MS4A1", "CSF3R", "CDH19", "NRXN1", "PTH", "PRM1"),
+        flip = TRUE,
+        stack = TRUE,
+        group.by = "cell_type_sk") + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm"))
+
+DotPlot(s.object, 
+        features = c("PRM1", "PTH", "NRXN1", "CDH19", "CSF3R", "MS4A1", "IL7R", "CPA3", "CD163", "MYOCD", "STEAP4", "PROX1", "SHANK3", "JAM2", "DCN", "PDGFRA", "ADIPOQ"),
+        group.by = "cell_type_sk") + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm")) +
+  coord_flip() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+unique(s.object$cell_type_sk)
+
+```
+
+``` {r fig.height = 24, fig.width = 20}
+
+Idents(s.object) = "cell_type_sk"
+
+# Find cluster markers
+markers <- FindAllMarkers(s.object, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+# Select top 10 markers per cluster
+top5 <- markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+top10 <- markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+DoHeatmap(s.object, 
+          features = top5$gene,
+          group.by = "cell_type_sk") + 
+  scale_fill_gradientn(colors = rev(RColorBrewer::brewer.pal(n = 7, name = "RdBu"))) + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 6, 0.1, 0.1), "cm"))
+
+```
+
+``` {r fig.height = 20, fig.width = 20}
+
+adipo_levels <- c("Brown Adipocytes", "White Adipocytes", "Pre-adipocytes", "Adipocyte Progenitor Cells", "ADIPOQ+ Smooth Muscle Cells","Lipid Associated Macrophages")
+
+adipo.s.object <- subset(s.object, idents = adipo_levels)
+
+adipo.s.object@meta.data$cell_type_sk <- factor(x = adipo.s.object@meta.data$cell_type_sk, levels = adipo_levels)
+
+top10_adipo <- top10 %>% 
+  dplyr::filter(cluster %in% adipo_levels)
+
+DoHeatmap(adipo.s.object, 
+          features = top10_adipo$gene,
+          group.by = "cell_type_sk",
+          size = 10) + 
+  scale_fill_gradientn(colors = rev(RColorBrewer::brewer.pal(n = 7, name = "RdBu"))) + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 6, 0.1, 0.1), "cm"),
+        axis.text.y = element_text(size = 22))
+
+```
+
+``` {r}
+
+heat <- read.csv("/Users/seankodani/Downloads/HEAT.csv", header = FALSE)
+
+adipo.s.object <- ScaleData(adipo.s.object, scale.max = 1)
+
+DoHeatmap(adipo.s.object, 
+          features = heat$V1,
+          group.by = "cell_type_sk",
+          size = 10) + 
+  scale_fill_gradientn(colors = rev(RColorBrewer::brewer.pal(n = 7, name = "RdBu"))) + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 6, 0.1, 0.1), "cm"),
+        axis.text.y = element_text(size = 22))
+
+```
+
+
+### 
+
+#### Analysis of superficial vs. deep neck white adipocytes
+
+``` {r fig.width = 9, fig.height = 6}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+super <- getSignatureScores(vis)[, "superficial"]
+superup <- getSignatureScores(vis)[, "superficial_UP"]
+superdown <- getSignatureScores(vis)[, "superficial_DOWN"]
+sampletype <- s.object$neck_region
+celltype <- s.object$cell_type
+subject <- s.object$subject
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(super) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(superup) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(superdown) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(sampletype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(subject) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells")
+
+ggplot(graph.data) + 
+  aes(x=umap_1, y=umap_2, color=super) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis() +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_wrap(~sampletype, ncol = 3)
+
+a <- ggviolin(graph.data %>% 
+           dplyr::filter(celltype == "White Adipocytes"),
+         x = "sampletype", 
+         y = "super",
+         fill = "sampletype") +
+  labs(title = "White Adipocyte \n All Genes")
+b <- ggviolin(graph.data %>% 
+           dplyr::filter(celltype == "White Adipocytes"),
+         x = "sampletype", 
+         y = "superup",
+         fill = "sampletype") +
+  labs(title = "White Adipocyte \n Upregulated Genes")
+c <- ggviolin(graph.data %>% 
+           dplyr::filter(celltype == "White Adipocytes"),
+         x = "sampletype", 
+         y = "superdown",
+         fill = "sampletype") +
+  labs(title = "White Adipocyte \n Downregulated Genes")
+
+a + b + c
+
+```
+
+``` {r fig.height = 4, fig.width = 3}
+
+ggviolin(graph.data %>% 
+           dplyr::filter(celltype %in% c("White Adipocytes", "Brown Adipocytes")),
+         x = "celltype", 
+         y = "superdown",
+         fill = "celltype",
+              add = c("jitter"),
+              add.params = list(alpha = 0.5)) +
+  labs(title = "White Adipocyte \n Downregulated Genes")
+
+```
+
+``` {r}
+
+ggviolin(graph.data %>% 
+           dplyr::filter(celltype == "White Adipocytes") %>% 
+           dplyr::filter(sampletype == "Deep"),
+         x = "subject", 
+         y = "super",
+         fill = "subject",
+              add = c("jitter"),
+              add.params = list(alpha = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  labs(title = "White Adipocyte \n Deep Samples \n All regulated Genes")
+
+ggviolin(graph.data %>% 
+           dplyr::filter(celltype == "White Adipocytes") %>% 
+           dplyr::filter(sampletype == "Superficial"),
+         x = "subject", 
+         y = "super",
+         fill = "subject",
+              add = c("jitter"),
+              add.params = list(alpha = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  labs(title = "White Adipocyte \n Superifical Samples \n All regulated Genes")
+
+```
+
+
+### HEAT signature by sample
+
+``` {r}
+
+ggviolin(graph.data %>% 
+           dplyr::filter(celltype == "White Adipocytes") %>% 
+           dplyr::filter(sampletype == "Deep") %>% 
+           dplyr::filter(Hallmark == "HEAT"),
+         x = "subject", 
+         y = "sigScores",
+         fill = "subject",
+              add = c("jitter"),
+              add.params = list(alpha = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  labs(title = "White Adipocyte \n Deep Samples \n HEAT Signature")
+
+ggviolin(graph.data %>% 
+           dplyr::filter(celltype == "White Adipocytes") %>% 
+           dplyr::filter(sampletype == "Superficial") %>% 
+           dplyr::filter(Hallmark == "HEAT"),
+         x = "subject", 
+         y = "sigScores",
+         fill = "subject",
+              add = c("jitter"),
+              add.params = list(alpha = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  labs(title = "White Adipocyte \n Superficial Samples \n HEAT Signature")
+
+```
+
+### Vision Analysis of PBMCs for Comparison
+
+##### Setting up object from h5 file
+
+The 
+
+``` {r}
+# 
+# pbmc.data <- Read10X_h5(filename = "/Users/seankodani/Downloads/20k_Human_Donor1-4_PBMC_3p_gem-x_multiplex_5k_Human_Donor1_PBMC_3p_gem-x_count_sample_filtered_feature_bc_matrix.h5")
+
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & percent.mt < 5)
+
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+
+pbmc <- NormalizeData(pbmc)
+
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pbmc), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+
+# Examine and visualize PCA results a few different ways
+print(pbmc[["pca"]], dims = 1:5, nfeatures = 5)
+
+DimPlot(pbmc, reduction = "pca") + NoLegend()
+
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+DimPlot(pbmc, reduction = "umap", label = TRUE) + NoLegend()
+
+```
+
+``` {r}
+
+# find markers for every cluster compared to all remaining cells, report only the positive
+# ones
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE)
+pbmc.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1)
+
+```
+
+``` {r fig.height = 8, fig.width = 8}
+
+pbmc.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 5) %>%
+    ungroup() -> top5
+DoHeatmap(pbmc, features = top5$gene) + NoLegend()
+
+```
+
+``` {r}
+
+VlnPlot(pbmc, 
+        features = c("MS4A1", "GNLY", "CD3E", 
+                     "CD14", "FCER1A", "FCGR3A", 
+                     "LYZ", "PPBP","CD8A"),
+        stack = TRUE,
+        flip = TRUE)
+
+```
+
+Cluster 0 - Memory CD4 T Cell
+Cluster 1 - Naive CD4 T Cell
+Cluster 2 - CD14+ Monocytes
+Cluster 3 - CD8+ T Cells
+Cluster 4 - Naive CD4 T Cell
+Cluster 5 - Natural Killer Cells
+Cluster 6 - Memory CD4 T Cell
+Cluster 7 - B Cells
+Cluster 8 - FCGR3A+ Mono
+Cluster 9 - Memory CD4 T Cell
+Cluster 10 - Dendritic Cells
+Cluster 11 - Platelets
+
+``` {r}
+
+new.cluster.ids <- c("Memory CD4 T Cell", "Naive CD4 T Cell", "CD14+ Monocytes", 
+                     "CD8+ T Cells", "Naive CD4 T Cell", "Natural Killer Cells",
+                     "Memory CD4 T Cell", "B Cells", "FCGR3A+ Mono",
+                     "Memory CD4 T Cell", "Dendritic Cells", "Platelets")
+names(new.cluster.ids) <- levels(pbmc)
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+```
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- pbmc@assays$RNA@layers$counts 
+rownames(counts) = rownames(pbmc@assays$RNA@features)
+colnames(counts) = rownames(pbmc@assays$RNA@cells)
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- pbmc@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = pbmc@meta.data[1:6]
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+``` {r}
+
+Signatures="/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+# vis <- readRDS(file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+
+```
+
+
+
+``` {r fig.width = 8, fig.height = 4}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+celltype <- pbmc$cell_type
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(sampletype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(subject) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+ gather(4:8, key = "Hallmark", value = "sigScores") 
+
+a <- DimPlot(pbmc, 
+             reduction = "umap", 
+             label = TRUE, 
+             pt.size = 0.5,
+             repel = TRUE) + NoLegend()
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=umap_1, y=umap_2, color=sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(limits = c(-0.3,2.6)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_grid(~Hallmark)
+
+a + b
+
+```
+
+#### Classic Beige Markers
+
+``` {r, fig.height = 4, fig.width = 4}
+
+FeaturePlot(s.object, 
+            features = c("ZIC1", "LHX8"),
+            combine = FALSE,
+            max.cutoff = 1)
+
+```
+
+``` {r, fig.height = 4, fig.width = 4}
+
+FeaturePlot(s.object, 
+            features = c("TMEM26", "TNFRSF9", "TBX1", "CITED1"),
+            combine = FALSE,
+            max.cutoff = 1)
+
+```
+
+#### Comparing samples between surgeons
+
+``` {r fig.height = 5, fig.width = 10} 
+
+DimPlot(s.object, 
+        split.by = "Surgeon",
+        label = TRUE) +
+  NoLegend()
+
+total <- s.object@meta.data %>% 
+  # dplyr::select(cell_type, sample, Surgeon) %>% 
+  group_by(sample, Surgeon, neck_region) %>% 
+  summarise(sample.sum = n())
+
+surgeon.comparison <- s.object@meta.data %>% 
+  # dplyr::select(cell_type, sample, Surgeon) %>% 
+  group_by(cell_type, sample, Surgeon) %>% 
+  summarise(cell.sum = n()) %>% 
+  left_join(total, by = c("sample", "Surgeon")) %>% 
+  mutate(proportion = cell.sum / sample.sum)
+
+```
+
+``` {r}
+
+ggboxplot(surgeon.comparison %>% 
+            dplyr::filter(neck_region == "Superficial"),
+          x = "Surgeon",
+          y = "proportion",
+          add = "jitter",
+          color = "Surgeon",
+          xlab = "Surgeon",
+          ylab = "Number of Cells") +
+  stat_compare_means(method = "t.test", vjust = -2, paired = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.2))) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.8, hjust=1),
+        legend.position = "none") +
+  facet_wrap(~cell_type, scale = "free") +
+  labs(title = "Superficial Neck Tissue Surgeon Comparison")
+
+ggboxplot(surgeon.comparison %>% 
+            dplyr::filter(neck_region == "Deep"),
+          x = "Surgeon",
+          y = "proportion",
+          add = "jitter",
+          color = "Surgeon",
+          xlab = "Surgeon",
+          ylab = "Number of Cells") +
+  stat_compare_means(method = "t.test", vjust = -2, paired = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.2))) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.8, hjust=1),
+        legend.position = "none") +
+  facet_wrap(~cell_type, scale = "free") +
+  labs(title = "Deep Neck Tissue Surgeon Comparison")
+
+
+head(s.object@meta.data)
+
+```
+
+#### UMI vs Signature Score
+
+``` {r}
+
+for(hallmark in unique(graph.data$Hallmark)){
+ # hallmark = "HEAT"
+  a <- ggplot(graph.data %>% 
+                dplyr::filter(Hallmark == hallmark), 
+              aes(x = sigScores, 
+                  y = umi)) + 
+    geom_point(aes(color = celltype), size = 0.5) + 
+    geom_smooth(data = graph.data %>% 
+                 dplyr::filter(Hallmark == hallmark),
+              method = "lm", 
+              linetype = "dashed",
+              se = FALSE) + 
+    stat_poly_eq(data = graph.data %>% 
+                 dplyr::filter(Hallmark == hallmark),
+                 aes(label = paste(..rr.label..,
+                                 ..p.value.label..,
+                                 sep = "~~~")),
+               formula = y ~ x,
+               parse = TRUE) +
+    theme_pubr() +
+    theme(legend.position = "none") +
+    labs(title = hallmark)
+  
+  print(a)
+  
+}
+
+```
+
+``` {r}
+
+ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "Adipo") %>% 
+         dplyr::filter(!celltype %in% c("White Adipocytes", 
+                                        "Brown Adipocytes",
+                                        "Pre-adipocytes",
+                                        "Lipid Associated Macrophages")), 
+              aes(x = sigScores, 
+                  y = umi)) + 
+    geom_point(aes(color = celltype), size = 0.5) + 
+    geom_smooth(data = graph.data %>% 
+                  dplyr::filter(Hallmark == "Adipo") %>% 
+                  dplyr::filter(!celltype %in% c("White Adipocytes",
+                                                 "Brown Adipocytes",
+                                        "Pre-adipocytes",
+                                        "Lipid Associated Macrophages")),
+              method = "lm", 
+              linetype = "dashed",
+              se = FALSE) + 
+    stat_poly_eq(data = graph.data %>% 
+                  dplyr::filter(Hallmark == "Adipo") %>% 
+                  dplyr::filter(!celltype %in% c("White Adipocytes",
+                                                 "Brown Adipocytes",
+                                        "Pre-adipocytes",
+                                        "Lipid Associated Macrophages")),
+                 aes(label = paste(..rr.label..,
+                                 ..p.value.label..,
+                                 sep = "~~~")),
+               formula = y ~ x,
+               parse = TRUE) +
+    theme_pubr() +
+    theme(legend.position = "none") +
+    labs(title = "Adipo")
+```
+
+### Figures for Tuesday Seminar
+
+``` {r, fig.height = 7, fig.width = 10}
+
+features <- c("CNTNAP5", "MYOCD", "CD163", "SHANK3", "PDGFRA", "ADIPOQ")  # Replace with actual gene names
+
+colors_list <- list(
+  "CNTNAP5" = c("lightgrey", "#d61f33"),
+  "MYOCD" = c("lightgrey", "#fbb294"),
+  "CD163" = c("lightgrey", "#0461cf"),
+  "SHANK3" = c("lightgrey", "#dfa9c1"),
+  "PDGFRA" = c("lightgrey", "#629372"),
+  "ADIPOQ" = c("lightgrey", "#ffe65a")
+)
+
+colors_title <- list(
+  "CNTNAP5" = c("#d61f33"),
+  "MYOCD" = c("#fbb294"),
+  "CD163" = c("#0461cf"),
+  "SHANK3" = c("#dfa9c1"),
+  "PDGFRA" = c("#629372"),
+  "ADIPOQ" = c("#ffe65a")
+)
+
+plots <- list()
+
+plots <- lapply(features, function(gene) {
+  FeaturePlot(s.object, 
+                                  features = gene, 
+                                  cols = colors_list[[gene]],
+                                  pt.size = 0.25,
+                                  alpha = 1,
+                                  order = TRUE) +
+    theme(
+      plot.margin = margin(0, 0, 0, 0),
+      axis.title = element_blank(),
+      axis.line = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      plot.title = element_blank()
+    ) +
+    ggtitle(gene) +
+    theme(plot.title = element_text(color = colors_title[[gene]], size = 14, face = "bold")) +
+    NoLegend()
+  
+})
+
+wrap_plots(plots, ncol = 3)  + plot_layout(guides = 'collect')
+
+```
+
+``` {r}
+
+features <- c("CNTNAP2", "ACTA2", "PTPRC", "PECAM1", "DCN", "PLIN1", "PPARGC1A", "CDH19")  
+
+colors_list <- list(
+  "CNTNAP2" = c("lightgrey", "#d61f33"),
+  "ACTA2" = c("lightgrey", "#fbb294"),
+  "PTPRC" = c("lightgrey", "#0461cf"),
+  "PECAM1" = c("lightgrey", "#dfa9c1"),
+  "DCN" = c("lightgrey", "#629372"),
+  "PLIN1" = c("lightgrey", "#ffe65a"),
+  "PPARGC1A" = c("lightgrey", "#97600f"),
+  "CDH19" = c("lightgrey", "#946b9f")
+)
+
+colors_title <- list(
+  "CNTNAP2" = c("#d61f33"),
+  "ACTA2" = c("#fbb294"),
+  "PTPRC" = c("#0461cf"),
+  "PECAM1" = c("#dfa9c1"),
+  "DCN" = c("#629372"),
+  "PLIN1" = c("#ffe65a"),
+  "PPARGC1A" = c("#97600f"),
+  "CDH19" = c("#946b9f")
+)
+# 
+#   "ADIPOQ+ Smooth Muscle Cells" = "#f87d27",
+#   "PRM1+ Cells" = "#fd5399",                  
+#   "B Lymphocytes" = "#b3c7f7",               
+#   "Schwann Cells" = "#bc1523",              
+#   "Mast Cells" = "#054fb9",                  
+#   "Brown Adipocytes" = "#97600f",             
+#   "Mesenchymal Stem Cells" = "#0098ae",       
+#   "Neutrophils" = "#0073e6",      
+#   "Parathyroid Associated Cells" = "#f02943",
+#   "Lipid Associated Macrophages" = "#001965", 
+#   "Pre-adipocytes" = "#a4c76d",              
+#   "Pericytes" = "#e0641c",            
+#   "T Lymphocytes" = "#8babf1",               
+#   "Lymphatic Endothelial Cells" = "#946b9f",  
+#   "Arterial Endothelial Cells" = "#f7dae6", 
+#   "Capillary Endothelial Cells" = "#dfa9c1",
+#   "Venous Endothelial Cells" = "#b37f96",    
+#   "Smooth Muscle Cells" = "#fbb294",         
+#   "Neuron Associated Cells" = "#d61f33",     
+#   "Macrophages" = "#0461cf",                
+#   "Adipocyte Progenitor Cells" = "#629372",   
+#   "White Adipocytes" = "#ffe65a"   
+  
+
+plots <- list()
+
+plots <- lapply(features, function(gene) {
+  FeaturePlot(s.object, 
+              features = gene, 
+              cols = colors_list[[gene]],
+              pt.size = 0.25,
+              alpha = 1,
+              order = TRUE) +
+    theme(
+      plot.margin = margin(0, 0, 0, 0),
+      axis.title = element_blank(),
+      axis.line = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      plot.title = element_blank()
+    ) +
+    ggtitle(gene) +
+    theme(plot.title = element_text(color = colors_title[[gene]], size = 14, face = "bold")) +
+    NoLegend()
+  
+})
+
+wrap_plots(plots, ncol = 4)  + plot_layout(guides = 'collect')
+
+```
+
+``` {r, fig.height = 5, fig.width = 7}
+
+cell_colors <- rep("lightgrey", length(levels(s.object$cell_type)))  # Default grey
+names(cell_colors) <- levels(s.object$cell_type)  # Assign names
+
+cell_colors["Brown Adipocytes"] <- "#97600f"
+
+FeaturePlot(s.object, features = "UCP1", order = TRUE) + 
+  theme(
+    plot.margin = margin(0, 0, 0, 0),
+      axis.title = element_blank(),
+      axis.line = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      plot.title = element_blank()
+    ) + 
+  NoLegend()
+
+VlnPlot(s.object, 
+             features = "UCP1", 
+             cols = cell_colors,
+             group.by = "cell_type",
+             pt.size = 0) +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm")) + 
+  geom_jitter(aes(color = ifelse(ident == "Brown Adipocytes", "#97600f", "lightgrey")),
+                size = 0.5, width = 0.2) + 
+    scale_color_identity() +
+  NoLegend()
+
+VlnPlot(s.object, 
+             features = "UCP1", 
+             cols = cell_colors,
+             group.by = "cell_type") +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm")) + 
+  # geom_jitter(aes(color = ifelse(ident == "Brown Adipocytes", "#97600f", "lightgrey")),
+  #               size = 0.5, width = 0.2) + 
+  #   scale_color_identity() +
+  NoLegend()
+
+```
+
+### Looking at the Adipocyte Progenitor Subtypes 
+
+``` {r}
+
+s.apc <- subset(s.object, idents = c("Adipocyte Progenitor Cells"))
+
+```
+
+``` {r}
+
+s.apc <- FindClusters(s.apc, resolution = 0.1)
+
+s.apc@meta.data
+Idents(s.apc) = "seurat_clusters"
+DimPlot(s.apc, label = TRUE)
+
+DotPlot(s.apc,
+        features = c("DPP4", "DCN", "PDGFRA", "ICAM1", "PPARG"))
+
+```
+
+``` {r, fig.width = 2, fig.height = 3}
+
+table <- s.apc@meta.data %>% 
+  dplyr::filter(neck_region != "Intermediate") %>% 
+  group_by(seurat_clusters, neck_region, subject) %>% 
+  summarise(sum = n()) %>% 
+  ungroup()
+  
+table2 <- table %>% 
+  left_join(table %>% group_by(neck_region, subject) %>% 
+              summarise(total = sum(sum)), 
+            by = c("neck_region", "subject")) %>% 
+  mutate(percent.by.depot = sum / total)
+
+ggplot(table2 %>% dplyr::filter(seurat_clusters == 0), aes(x = neck_region, 
+                                                           y = percent.by.depot, 
+                                                           color = neck_region)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_pubr()
+
+```
+
+``` {r, fig.height = 2, fig.width = 7}
+
+Idents(s.apc) = "neck_region"
+DotPlot(s.apc, features = c("PPARG", "PDGFRA", "DPP4", "ICAM1", "F3"))
+
+```
+
+### 52 random genes Signature Analysis
+
+``` {r}
+
+# Creating our gene list
+s.object.genes <- rownames(s.object@assays[["log_10k_norm"]]@meta.features)
+
+```
+
+AI written code for making 20 random gene sets of 52 genes each and writing to a GMT file.
+
+``` {r}
+
+# Assuming you have a character vector of gene names:
+# Example: gene_names <- c("GeneA", "GeneB", "GeneC", ..., "GeneZ")
+# Replace with your actual gene name list
+
+create_random_gene_sets <- function(gene_names, num_sets = 20, set_size = 52) {
+  # Check if the set_size is larger than the number of genes:
+  if (set_size > length(gene_names)) {
+    stop("Error: set_size cannot be larger than the number of genes.")
+  }
+
+  random_gene_sets <- list() # Initialize an empty list to store the sets
+
+  for (i in 1:num_sets) {
+    # Efficiently sample gene names *without* replacement
+    random_gene_sets[[i]] <- sample(gene_names, size = set_size, replace = FALSE)
+  }
+
+  return(random_gene_sets)
+}
+
+# Example Usage:
+# Assume you have a vector of gene names called 'gene_names'
+gene_names <- s.object.genes # Example: 1000 genes
+random_gene_sets <- create_random_gene_sets(gene_names)
+
+# Now you have a list called 'random_gene_sets' containing 20 lists,
+# each with 52 randomly selected unique gene names.
+
+# You can access the first gene set like this:
+# random_gene_sets[[1]]
+
+# You can access a specific gene in a specific set like this:
+# random_gene_sets[[5]][10] # 10th gene in the 5th set
+
+```
+
+``` {r}
+
+# Assuming you have a list of gene sets called 'random_gene_sets' (as created in the previous response)
+# And assuming you have a description for each gene set. For simplicity, we'll use "Random Gene Set"
+# but you should replace this with a more meaningful description for your actual use case.
+
+write_gene_sets_to_gmt <- function(gene_sets, gmt_file, description = "Random Gene Set") {
+  # Input validation: check that gene_sets is a list
+  if (!is.list(gene_sets)) {
+    stop("Error: gene_sets must be a list.")
+  }
+
+  # Input validation: Check if gmt_file is a string
+  if(!is.character(gmt_file)) {
+    stop("Error: gmt_file must be a character string (filename).")
+  }
+
+  # Open the file for writing
+  con <- file(gmt_file, "w") # "w" for write mode
+
+  # Iterate through the gene sets and write each one to the file
+  for (i in seq_along(gene_sets)) { # Use seq_along for safe iteration
+
+    # Build the GMT line:  gene set name, description, gene symbols
+    gene_set_name <- paste0("GeneSet_", i)  # Create a unique name for each set
+
+    # Escape spaces in gene symbols with underscores
+    escaped_genes <- gsub(" ", "_", gene_sets[[i]])
+
+    gmt_line <- paste(gene_set_name, description, paste(escaped_genes, collapse = "\t"), sep = "\t")
+
+    # Write the line to the file
+    writeLines(gmt_line, con)
+  }
+
+  # Close the connection to the file
+  close(con)
+  message(paste("GMT file written to:", gmt_file))
+}
+
+# Example Usage (assuming you have 'random_gene_sets' from the previous code):
+# First, generate the random gene sets if you haven't already:
+
+gmt_filename <- "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/random_gene_sets.gmt"
+write_gene_sets_to_gmt(random_gene_sets, gmt_filename)
+
+# Now you have a GMT file named "random_gene_sets.gmt" in your working directory.
+
+
+```
+
+Running the VISION analysis pipeline with these gene signatures (plus the HEAT signature).
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- s.object@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- s.object@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = s.object@meta.data[1:6]
+```
+
+``` {r}
+
+Signatures='/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/random_gene_sets_HEAT.gmt'
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+# vis <- readRDS(file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+
+```
+
+From this vision analysis we create a new dataset called "graph.data" that is joining the UMAP embeddings witht he signature scores, the sample type (type of adipose tissue probed) and the cell type that was previously identified in the object. The graph produced below is faceting for the different signature scores.
+
+``` {r fig.width = 10, fig.height = 6}
+
+graph.data <- as.data.frame(getSignatureScores(vis)) %>%
+  rownames_to_column(var = "cells") %>% 
+  left_join(vis@metaData %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  gather(2:22, key = "Signature", value = "sigScores")
+  
+ggplot(graph.data %>% 
+         dplyr::filter(cell_type_simplified == "Brown Adipocytes"),
+       aes(x = Signature, y = sigScores)) +
+  geom_violin() +
+  theme_pubr() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+
+### Test
+
+``` {r}
+
+DimPlot(test)
+
+s.objectold
+
+test2 <- s.objectold@meta.data %>% 
+  group_by(cell_type_subset, neck_region, SubjectID) %>% 
+  summarize(n = n()) %>% 
+  left_join(s.objectold@meta.data %>% 
+              group_by(neck_region, SubjectID) %>% 
+              summarize(n = n()), 
+            by = c("neck_region", "SubjectID")) %>% 
+  mutate(ratio = n.x / n.y)
+
+test2 <- test2 %>% 
+  dplyr::filter(cell_type_subset %in% c("ASPC_1", "ASPC_2", "ASPC_3", "ASPC_4", "ASPC_5")) %>% 
+  mutate(type = ifelse(cell_type_subset %in% c("ASPC_2", "ASPC_3"), "Early ASPC", cell_type_subset))
+
+ggplot(test2 %>% dplyr::filter(neck_region != "Intermediate"),
+       aes(x = neck_region, y = ratio)) +
+  geom_boxplot(outliers = FALSE) +
+  geom_jitter() +
+  theme_pubr() +
+  facet_grid(~type) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+
+for (types in unique(test2$type)) {
+
+print(paste("T-test for ", types))
+  
+ttest <- t.test(x = test2$ratio[test2$neck_region == "Deep" & test2$type == types],
+       y = test2$ratio[test2$neck_region == "Superficial" & test2$type == types],
+       paired = FALSE)
+
+print(ttest)
+
+}
+
+DotPlot(test, features = c("KCNB2", "PRG4", "SEMA3C", "CREB5", "CD55", "GUCY1A2", "TRIO", "FBN1", "PXDNL", "SMURF2", "HUNK", "DOCK4", "MFAP5"))
+
+DotPlot(test, features = c("EPHA3", "COL15A1", "CXCL14", "PRR16", "APOD", "KCNIP1", "BMPER", "HHIP"))
+
+```

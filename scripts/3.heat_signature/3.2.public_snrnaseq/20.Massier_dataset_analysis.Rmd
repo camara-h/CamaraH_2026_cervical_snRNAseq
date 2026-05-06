@@ -1,0 +1,396 @@
+---
+title: "18.Wang_dataset_analysis"
+output: html_document
+date: "2024-12-04"
+---
+
+```{r setup, include=FALSE}
+pacman::p_load(SingleCellExperiment,
+               metap,
+               tradeSeq,
+               Seurat,
+               tidyverse, 
+               Matrix,
+               scales,
+               cowplot,
+               viridis,
+               VISION)
+```
+
+``` {r}
+
+massier <- readRDS("../Data/PublishedDatasets/Massier 2023/all.rds")
+
+DimPlot(massier, reduction = "umap", label = TRUE, raster = FALSE)
+
+FeaturePlot(massier, features = "LPL", raster = FALSE)
+
+VlnPlot(massier, features = "GPAM")
+
+
+
+massier.oFAP <- readRDS("../Data/PublishedDatasets/Massier 2023/omFAP.rds")
+massier.adipo <- readRDS("../Data/PublishedDatasets/Massier 2023/adipo.rds")
+
+```
+
+``` {r}
+
+all.genes <- rownames(massier)
+massier <- ScaleData(massier, features = all.genes)
+massier <- RunPCA(massier, features = VariableFeatures(object = massier))
+DimPlot(massier, reduction = "pca") + NoLegend()
+ElbowPlot(massier)
+massier <- FindNeighbors(massier, dims = 1:20)
+massier <- FindClusters(massier, resolution = 0.4)
+
+```
+
+``` {r}
+
+metadata <- wang@meta.data
+
+metadata$clust.ident[which(metadata$seurat_clusters==0)] <- "Preadipocytes"
+metadata$clust.ident[which(metadata$seurat_clusters==1)] <- "Adipocytes"
+metadata$clust.ident[which(metadata$seurat_clusters==2)] <- "Endothelial cells 1"
+metadata$clust.ident[which(metadata$seurat_clusters==3)] <- "Endothelial cells 2"
+metadata$clust.ident[which(metadata$seurat_clusters==4)] <- "Endothelial cells 3"
+metadata$clust.ident[which(metadata$seurat_clusters==5)] <- "Macrophages"
+metadata$clust.ident[which(metadata$seurat_clusters==6)] <- "Skeletal muscle 1"
+metadata$clust.ident[which(metadata$seurat_clusters==7)] <- "Skeletal muscle 2"
+metadata$clust.ident[which(metadata$seurat_clusters==8)] <- "Skeletal muscle 3"
+metadata$clust.ident[which(metadata$seurat_clusters==9)] <- "Cells unknown"
+metadata$clust.ident[which(metadata$seurat_clusters==10)] <- "CD4+ Tcm"
+metadata$clust.ident[which(metadata$seurat_clusters==11)] <- "Skeletal muscle 4"
+metadata$clust.ident[which(metadata$seurat_clusters==12)] <- "Endothelial cells 4"
+
+wang@meta.data <- metadata
+
+DimPlot(wang, reduction = "umap", group.by = "clust.ident", label = TRUE)
+
+```
+
+``` {r}
+
+features = c("ADIPOQ","PPARGC1A", "PDGFRA", "DCN", "MYOCD", "PDE4D",  "ADGRF5", "JAM2", "STEAP4", "PKHD1L1", "CDH19", "MPZ",  "CARD11", "CD163", "CPA3", "CSF3R")
+
+VlnPlot(wang, 
+        features = features, 
+        stack = TRUE, 
+        flip = TRUE, 
+        group.by = "clust.ident") + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm"))
+
+```
+
+New annotations
+
+``` {r}
+
+metadata <- wang@meta.data
+
+metadata$new.clust.ident[which(metadata$seurat_clusters==0)] <- "Preadipocytes"
+metadata$new.clust.ident[which(metadata$seurat_clusters==1)] <- "Adipocytes"
+metadata$new.clust.ident[which(metadata$seurat_clusters==2)] <- "Endothelial cells 1"
+metadata$new.clust.ident[which(metadata$seurat_clusters==3)] <- "Endothelial cells 2"
+metadata$new.clust.ident[which(metadata$seurat_clusters==4)] <- "Endothelial cells 3"
+metadata$new.clust.ident[which(metadata$seurat_clusters==5)] <- "Macrophages"
+metadata$new.clust.ident[which(metadata$seurat_clusters==6)] <- "Smooth Muscle Cell"
+metadata$new.clust.ident[which(metadata$seurat_clusters==7)] <- "Skeletal muscle 2"
+metadata$new.clust.ident[which(metadata$seurat_clusters==8)] <- "Lymphatic EC"
+metadata$new.clust.ident[which(metadata$seurat_clusters==9)] <- "Cells unknown"
+metadata$new.clust.ident[which(metadata$seurat_clusters==10)] <- "CD4+ Tcm"
+metadata$new.clust.ident[which(metadata$seurat_clusters==11)] <- "Skeletal muscle 4"
+metadata$new.clust.ident[which(metadata$seurat_clusters==12)] <- "Endothelial cells 4"
+
+wang@meta.data <- metadata
+
+DimPlot(wang, reduction = "umap", group.by = "new.clust.ident", label = TRUE)
+
+```
+
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- wang@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- wang@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = wang@meta.data
+```
+
+``` {r}
+
+Signatures="../Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/14.Angueira_Vision_analysis/VISION_angueira_HEAT.rds")
+# vis <- readRDS(file = "./vision_neck_hallmark.rds")
+
+```
+
+``` {r}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+sampletype <- wang$orig.ident
+celltype <- wang$new.clust.ident
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(sampletype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  gather(4:8, key = "Hallmark", value = "sigScores")
+
+ggplot(graph.data) + 
+  aes(x=UMAP_1, y=UMAP_2, color=sigScores) + 
+  geom_point(size = 0.5) +
+  scale_color_viridis() +
+  facet_grid(sampletype~Hallmark)
+
+ggplot(graph.data %>% 
+         filter(Hallmark == "HEAT")) + 
+  aes(x=UMAP_1, y=UMAP_2, color=sigScores) + 
+  geom_point(size = 0.5) +
+  scale_color_viridis()
+
+```
+
+``` {r}
+
+
+ggplot((graph.data %>% filter(Hallmark == "HEAT")), aes(x = celltype, y = sigScores, fill = celltype)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of Signature Scores by Cell Type" # Plot title
+  ) 
+
+```
+
+
+<!-- ``` {r} -->
+
+<!-- neck.sc1 <- Read10X_h5("../Data/Published Datasets/Wang 2024/GSE184707_RAW/GSM5595449_h1_nucf_filtered.h5") %>%  -->
+<!--   CreateSeuratObject(counts = ., project = "neck_sc1", min.cells = 3, min.features = 200) -->
+<!-- neck.sc2 <- Read10X_h5("../Data/Published Datasets/Wang 2024/GSE184707_RAW/GSM5595449_h1_nucf_filtered.h5") %>%  -->
+<!--   CreateSeuratObject(counts = ., project = "neck_sc2", min.cells = 3, min.features = 200) -->
+<!-- neck.sc3 <- Read10X_h5("../Data/Published Datasets/Wang 2024/GSE184707_RAW/GSM5595449_h1_nucf_filtered.h5") %>%  -->
+<!--   CreateSeuratObject(counts = ., project = "neck_sc3", min.cells = 3, min.features = 200) -->
+<!-- neck.sc4 <- Read10X_h5("../Data/Published Datasets/Wang 2024/GSE184707_RAW/GSM5595449_h1_nucf_filtered.h5") %>%  -->
+<!--   CreateSeuratObject(counts = ., project = "neck_sc4", min.cells = 3, min.features = 200) -->
+
+<!-- neck.sc = merge(x = neck.sc1, y = c(neck.sc2, neck.sc3, neck.sc4),  -->
+<!--                 add.cell.ids = c("neck_sc1","neck_sc2", "neck_sc3", "neck_sc4")) -->
+
+<!-- rm(neck_sc1, neck_sc2, neck_sc3, neck_sc4) -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- # The [[ operator can add columns to object metadata. This is a great place to stash QC stats -->
+<!-- neck.sc[["percent.mt"]] <- PercentageFeatureSet(neck.sc, pattern = "^MT-") -->
+
+<!-- # Visualize QC metrics as a violin plot -->
+<!-- VlnPlot(neck.sc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3) -->
+
+<!-- # FeatureScatter is typically used to visualize feature-feature relationships, but can be used -->
+<!-- # for anything calculated by the object, i.e. columns in object metadata, PC scores etc. -->
+
+<!-- plot1 <- FeatureScatter(neck.sc, feature1 = "nCount_RNA", feature2 = "percent.mt") -->
+<!-- plot2 <- FeatureScatter(neck.sc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") -->
+<!-- plot1 + plot2 -->
+
+<!-- neck.sc <- subset(neck.sc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5) -->
+
+<!-- ``` -->
+
+
+<!-- ``` {r} -->
+
+<!-- # run standard anlaysis workflow -->
+<!-- neck.sc <- NormalizeData(neck.sc) -->
+<!-- neck.sc <- FindVariableFeatures(neck.sc) -->
+<!-- neck.sc <- ScaleData(neck.sc) -->
+<!-- neck.sc <- RunPCA(neck.sc) -->
+
+<!-- ElbowPlot(neck.sc) -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- neck.sc <- FindNeighbors(neck.sc, dims = 1:30, reduction = "pca") -->
+<!-- neck.sc <- FindClusters(neck.sc, resolution = 2, cluster.name = "unintegrated_clusters") -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- neck.sc <- RunUMAP(neck.sc, dims = 1:20, reduction = "pca", reduction.name = "umap.unintegrated") -->
+<!-- DimPlot(neck.sc, reduction = "umap.unintegrated", group.by = c("orig.ident", "seurat_clusters")) -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- neck.sc <- IntegrateLayers(object = neck.sc, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca", -->
+<!--     verbose = FALSE) -->
+
+<!-- # re-join layers after integration -->
+<!-- neck.sc[["RNA"]] <- JoinLayers(neck.sc[["RNA"]]) -->
+
+<!-- neck.sc <- FindNeighbors(neck.sc, reduction = "integrated.cca", dims = 1:30) -->
+<!-- neck.sc <- FindClusters(neck.sc, resolution = 0.4) -->
+
+<!-- ``` -->
+
+
+<!-- ``` {r} -->
+
+<!-- neck.sc <- RunUMAP(neck.sc, dims = 1:30, reduction = "integrated.cca") -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- # Visualization -->
+<!-- DimPlot(neck.sc, reduction = "umap", group.by = c("orig.ident", "seurat_annotations")) -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- Idents(neck.sc) = "RNA_snn_res.0.4" -->
+<!-- UMAPPlot(neck.sc) -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- features = c("ADIPOQ","PPARGC1A", "PDGFRA", "DCN", "MYOCD", "PDE4D",  "ADGRF5", "JAM2", "STEAP4", "PKHD1L1", "CDH19", "MPZ",  "CARD11", "CD163", "CPA3", "CSF3R") -->
+
+
+<!-- VlnPlot(neck.sc,  -->
+<!--         features = features,  -->
+<!--         stack = TRUE,  -->
+<!--         flip = TRUE,  -->
+<!--         group.by = "RNA_snn_res.0.4") +  -->
+<!--   NoLegend() + -->
+<!--   theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm")) # plot.margin is set to make sure that the x-axis labels don't get cutoff -->
+
+
+<!-- FeaturePlot(neck.sc, reduction = "umap", features = "ADIPOQ") -->
+
+<!-- VlnPlot(neck.sc, features = c("ASPN", "COL1A2",  "DLK1", "CFD", "APOC1", "APOE", "COL15A1", "IGFBP5", "ACTA2", "TAGLN"),  -->
+<!--         stack = TRUE,  -->
+<!--         flip = TRUE) -->
+
+<!-- VlnPlot(neck.sc, features = c("CLDN5", "RBP7",  "HIST1H4C", "KIAA0101", "NKG7", "KLRB1"),  -->
+<!--         stack = TRUE,  -->
+<!--         flip = TRUE) -->
+
+<!-- VlnPlot(neck.sc, features = c("S100A8", "S100A9",  "TFF3", "CCL21", "HBG2", "HBG1"),  -->
+<!--         stack = TRUE,  -->
+<!--         flip = TRUE) -->
+
+<!-- ``` -->
+
+
+<!-- ``` {r} -->
+
+<!-- # The [[ operator can add columns to object metadata. This is a great place to stash QC stats -->
+<!-- neck.sc1[["percent.mt"]] <- PercentageFeatureSet(neck.sc1, pattern = "^MT-") -->
+
+<!-- # Visualize QC metrics as a violin plot -->
+<!-- VlnPlot(neck.sc1, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3) -->
+
+<!-- # FeatureScatter is typically used to visualize feature-feature relationships, but can be used -->
+<!-- # for anything calculated by the object, i.e. columns in object metadata, PC scores etc. -->
+
+<!-- plot1 <- FeatureScatter(neck.sc1, feature1 = "nCount_RNA", feature2 = "percent.mt") -->
+<!-- plot2 <- FeatureScatter(neck.sc1, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") -->
+<!-- plot1 + plot2 -->
+
+<!-- neck.sc1 <- subset(neck.sc1, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 1) -->
+
+<!-- ``` -->
+
+
+<!-- ``` {r} -->
+
+<!-- # run standard anlaysis workflow -->
+<!-- neck.sc1 <- NormalizeData(neck.sc1) -->
+<!-- neck.sc1 <- FindVariableFeatures(neck.sc1) -->
+<!-- neck.sc1 <- ScaleData(neck.sc1) -->
+<!-- neck.sc1 <- RunPCA(neck.sc1) -->
+
+<!-- ElbowPlot(neck.sc1) -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- neck.sc1 <- FindNeighbors(neck.sc1, dims = 1:30, reduction = "pca") -->
+<!-- neck.sc1 <- FindClusters(neck.sc1, resolution = 0.6, cluster.name = "unintegrated_clusters") -->
+
+<!-- ``` -->
+
+<!-- ``` {r} -->
+
+<!-- neck.sc1 <- RunUMAP(neck.sc1, dims = 1:20) -->
+<!-- UMAPPlot(neck.sc1) -->
+<!-- # DimPlot(neck.sc, reduction = "umap.unintegrated", group.by = c("stim", "seurat_clusters")) -->
+
+<!-- ``` -->

@@ -1,0 +1,407 @@
+---
+title: "HEAT Signature Generation"
+output: html_document
+date: "2023-10-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(openxlsx)
+library(Seurat)
+library(tidyverse)
+library(here)
+
+# -------------------------------------------------------------------------
+# Define input and output paths
+# -------------------------------------------------------------------------
+
+# Bulk RNA-seq correlation source
+INPUT_SALEJ_LOGCPM <- here(
+"data", "6.internal_datasets", "Gavrila Lab Bulk RNAseq Data", "logCPM_for_correlations.csv"
+)
+
+# Microarray correlation source
+INPUT_LYNES_MICROARRAY <- here(
+"data/6.internal_datasets/Tseng_Datasets/Ruidan Xue's Microarray data/20 arrays for hBAT hWAT tissues/Supplementary_Table_cervical_at_microarray.xlsx"
+)
+
+# Cleaned Seurat object from the preprocessing pipeline
+INPUT_SEURAT_RDS <- here(
+  "data",
+  "adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"
+)
+
+OUTPUT_DATA_DIR <- here("output", "3.heat_signature", "data")
+OUTPUT_FIG_DIR <- here("output", "3.heat_signature", "figures")
+
+dir.create(OUTPUT_DATA_DIR, showWarnings = FALSE, recursive = TRUE)
+dir.create(OUTPUT_FIG_DIR, showWarnings = FALSE, recursive = TRUE)
+
+# -------------------------------------------------------------------------
+# Check required inputs
+# -------------------------------------------------------------------------
+required_inputs <- c(
+  INPUT_SALEJ_LOGCPM,
+  INPUT_LYNES_MICROARRAY,
+  INPUT_SEURAT_RDS
+)
+
+missing_inputs <- required_inputs[!file.exists(required_inputs)]
+
+if (length(missing_inputs) > 0) {
+  stop(
+    "Missing input file(s):\n",
+    paste(missing_inputs, collapse = "\n")
+  )
+}
+
+# -------------------------------------------------------------------------
+# Helper functions
+# -------------------------------------------------------------------------
+
+# Write a gene set collection in GMT format
+write_gmt <- function(gene_sets, file) {
+  lines <- lapply(names(gene_sets), function(set_name) {
+    paste(c(set_name, "NA", gene_sets[[set_name]]), collapse = "\t")
+  })
+  writeLines(unlist(lines), con = file)
+}
+
+# Compute Pearson correlation and p-value against a reference vector
+cor_with_reference <- function(gene_expr, ref_expr) {
+  cor_result <- cor.test(gene_expr, ref_expr, method = "pearson")
+  c(cor = cor_result$estimate, pval = cor_result$p.value)
+}
+```
+
+# Introduction
+
+This notebook generates the HEAT signature by intersecting three sources of
+evidence:
+
+1. Genes positively correlated with UCP1 in deep neck bulk RNA-seq data
+   from Salej et al.
+2. Genes positively correlated with UCP1 in deep neck microarray data from
+   Lynes et al.
+3. Genes enriched in brown adipocytes in the snRNA-seq neck adipose object.
+
+The final outputs are saved as tables and gene set files for downstream use.
+
+# Salej et al. bulk RNA-seq UCP1 correlation
+
+```{r}
+# Load TPM/logCPM data
+log2_cpm <- read_csv(INPUT_SALEJ_LOGCPM, show_col_types = FALSE)
+
+# Remove rows without gene symbols
+log2_cpm <- log2_cpm %>%
+  filter(!is.na(gene))
+
+# Prepare deep neck expression matrix
+log2_cpm_clean <- log2_cpm %>%
+  mutate(gene = make.unique(gene)) %>%
+  column_to_rownames("X") %>%
+  select(contains("Deep"))
+
+cpm_deep_t <- as.data.frame(t(log2_cpm_clean))
+cpm_deep_t <- data.frame(lapply(cpm_deep_t, function(x) as.numeric(as.character(x))))
+
+# Identify the Ensembl ID corresponding to UCP1
+ucp1_ensembl <- log2_cpm %>%
+  filter(gene == "UCP1") %>%
+  pull("X")
+
+ucp1_idx <- which(colnames(cpm_deep_t) == ucp1_ensembl)
+ucp1_exp <- cpm_deep_t[, ucp1_idx]
+
+# Correlate all genes against UCP1
+gene_names <- colnames(cpm_deep_t)
+
+cor_results <- t(sapply(
+  gene_names,
+  function(gene_id) cor_with_reference(cpm_deep_t[[gene_id]], ucp1_exp)
+))
+
+salej_cor_df <- data.frame(
+  Ensembl = gene_names,
+  estimate = cor_results[, "cor.cor"],
+  PValue = cor_results[, "pval"]
+) %>%
+  left_join(
+    log2_cpm %>% select(X, gene),
+    by = c("Ensembl" = "X")
+  ) %>%
+  rename(Gene = gene) %>%
+  mutate(FDR = p.adjust(PValue, method = "fdr")) %>%
+  arrange(FDR)
+
+write_csv(
+  salej_cor_df,
+  file.path(OUTPUT_DATA_DIR, "Salej_et_al_logCPM_correlation.csv")
+)
+```
+
+# Lynes et al. microarray UCP1 correlation
+
+```{r}
+# Load microarray data
+lynes_cts <- read.xlsx(
+  INPUT_LYNES_MICROARRAY,
+  sheet = "All Data by Individual"
+)
+
+# Standardize column names
+names(lynes_cts) <- gsub("[ \\.]", "_", names(lynes_cts))
+
+# Keep deep neck (CS) samples and create unique probe-level identifiers
+data_lynes <- lynes_cts %>%
+  dplyr::select(grep("CS", names(lynes_cts), value = TRUE), Gene_Symbol, Probe_Set_ID) %>%
+  mutate(Gene_ID = paste0(Gene_Symbol, "_(", Probe_Set_ID, ")")) %>%
+  column_to_rownames("Gene_ID") %>%
+  select(-c(Gene_Symbol, Probe_Set_ID))
+
+# Locate UCP1 probe(s)
+reference_gene <- grep("UCP1", rownames(data_lynes))
+data_lynes <- as.matrix(data_lynes)
+ref_values <- data_lynes[reference_gene, ]
+
+# Remove non-informative rows
+data_lynes <- data_lynes[str_detect(rownames(data_lynes), "^NA_", negate = TRUE), ]
+data_lynes <- data_lynes[str_detect(rownames(data_lynes), "---", negate = TRUE), ]
+
+# Correlate every probe against UCP1
+lynes_results <- sapply(seq_len(nrow(data_lynes)), function(i) {
+  cor.test(data_lynes[i, ], ref_values, method = "pearson")
+})
+
+lynes_results <- t(lynes_results)
+lynes_results <- as.data.frame(lynes_results)
+
+lynes_cor_df <- data.frame(
+  Gene = rownames(data_lynes),
+  p_value = sapply(lynes_results$p.value, function(x) x[1]),
+  estimate = sapply(lynes_results$estimate, function(x) x[1])
+) %>%
+  mutate(FDR = p.adjust(p_value, method = "fdr"))
+
+# Expand multi-gene probe annotations into one row per gene
+expanded_lynes_cor_df <- lynes_cor_df %>%
+  mutate(Gene_Probe = Gene) %>%
+  separate_rows(Gene, sep = " /// ") %>%
+  mutate(Gene = str_remove(Gene, "_\\(.*"))
+
+write_csv(
+  expanded_lynes_cor_df,
+  file.path(OUTPUT_DATA_DIR, "Lynes_et_al_correlation.csv")
+)
+```
+
+# Filter positively correlated genes in Salej and Lynes
+
+```{r}
+# Correlation filters used to define UCP1-associated genes
+estimate_th <- 0
+fdr_th <- 0.1
+pval_th <- 1
+
+salej_ucp1_pos_corr <- salej_cor_df %>%
+  filter(
+    estimate >= estimate_th,
+    FDR <= fdr_th,
+    PValue <= pval_th
+  ) %>%
+  distinct(Gene) %>%
+  filter(Gene != "UCP1") %>%
+  pull(Gene)
+
+lynes_ucp1_pos_corr <- expanded_lynes_cor_df %>%
+  filter(
+    estimate >= estimate_th,
+    FDR <= fdr_th,
+    p_value <= pval_th
+  ) %>%
+  distinct(Gene) %>%
+  filter(Gene != "UCP1") %>%
+  pull(Gene)
+```
+
+# Brown adipocyte-enriched genes from snRNA-seq
+
+```{r}
+s.object <- readRDS(INPUT_SEURAT_RDS)
+
+bad_mrk <- FindMarkers(
+  s.object,
+  ident.1 = "Brown Adipocytes",
+  only.pos = TRUE,
+  test.use = "wilcox"
+)
+
+filtered_bad_mrk <- bad_mrk %>%
+  rownames_to_column("Gene") %>%
+  filter(
+    avg_log2FC > 1,
+    pct.1 > 0.3,
+    p_val_adj <= 0.05
+  ) %>%
+  pull(Gene)
+```
+
+# Generate the HEAT signature
+
+```{r}
+HEAT_signature <- intersect(
+  filtered_bad_mrk,
+  intersect(salej_ucp1_pos_corr, lynes_ucp1_pos_corr)
+)
+
+HEAT_signature
+
+write.csv(
+  HEAT_signature,
+  file = file.path(OUTPUT_DATA_DIR, "heat_signature.csv"),
+  row.names = FALSE
+)
+
+save(
+  HEAT_signature,
+  file = file.path(OUTPUT_DATA_DIR, "heat_signature.Rdata")
+)
+
+write_gmt(
+  list("HEAT" = HEAT_signature),
+  file.path(OUTPUT_DATA_DIR, "heat_signature.gmt")
+)
+```
+
+# Save supporting gene lists
+
+```{r}
+genes_for_venn <- list(
+  "Salej et al\nBulk RNAseq" = salej_ucp1_pos_corr,
+  "Lynes et al\nMicroarray" = lynes_ucp1_pos_corr,
+  "Brown Adipocyte Enriched" = filtered_bad_mrk
+)
+
+save(
+  genes_for_venn,
+  file = file.path(OUTPUT_DATA_DIR, "genes_for_venn.Rdata")
+)
+```
+
+# Generate related UCP1-correlated signatures
+
+```{r}
+ucp1_corr <- intersect(salej_ucp1_pos_corr, lynes_ucp1_pos_corr)
+ucp1_corr <- setdiff(ucp1_corr, "UCP1")
+
+non_heat_ucp1_corr <- setdiff(ucp1_corr, HEAT_signature)
+non_heat_ucp1_corr <- setdiff(non_heat_ucp1_corr, "UCP1")
+
+write_gmt(
+  list(
+    "UCP1 correlated" = ucp1_corr,
+    "Non_HEAT UCP1 correlated" = non_heat_ucp1_corr
+  ),
+  file.path(OUTPUT_DATA_DIR, "non_HEAT_UCP1_corr_signature.gmt")
+)
+```
+
+# Save summary
+
+```{r}
+signature_summary <- tibble::tibble(
+  metric = c(
+    "n_salej_deep_samples",
+    "n_salej_ucp1_correlated_genes",
+    "n_lynes_deep_samples",
+    "n_lynes_ucp1_correlated_genes",
+    "n_brown_adipocyte_nuclei",
+    "n_total_nuclei",
+    "n_brown_adipocyte_enriched_genes",
+    "n_heat_genes",
+    "n_ucp1_correlated_genes_intersection",
+    "n_non_heat_ucp1_correlated_genes"
+  ),
+  value = c(
+    nrow(cpm_deep_t),
+    length(salej_ucp1_pos_corr),
+    ncol(data_lynes),
+    length(lynes_ucp1_pos_corr),
+    as.numeric(table(Idents(s.object))["Brown Adipocytes"]),
+    ncol(s.object),
+    length(filtered_bad_mrk),
+    length(HEAT_signature),
+    length(ucp1_corr),
+    length(non_heat_ucp1_corr)
+  )
+)
+
+readr::write_csv(
+  signature_summary,
+  file.path(OUTPUT_DATA_DIR, "heat_signature_generation_summary.csv")
+)
+
+write_csv(
+  bad_mrk %>% rownames_to_column("Gene"),
+  file.path(OUTPUT_DATA_DIR, "brown_adipocyte_FindMarkers_all_genes.csv")
+)
+
+write_csv(
+  bad_mrk %>%
+    rownames_to_column("Gene") %>%
+    filter(avg_log2FC > 1, pct.1 > 0.3, p_val_adj <= 0.05),
+  file.path(OUTPUT_DATA_DIR, "brown_adipocyte_enriched_genes_filtered.csv")
+)
+```
+
+
+# Save as a single Excel
+```{r}
+library(openxlsx)
+
+# Create workbook
+wb <- createWorkbook()
+
+# 1. Summary
+addWorksheet(wb, "Summary")
+writeData(wb, "Summary", signature_summary)
+
+# 2. Salej correlation
+addWorksheet(wb, "Salej corr")
+writeData(wb, "Salej corr", salej_cor_df)
+
+# 3. Lynes correlation
+addWorksheet(wb, "Lynes corr")
+writeData(wb, "Lynes corr", expanded_lynes_cor_df)
+
+# 4. Brown adipocyte FindMarkers
+addWorksheet(wb, "BAds FindMarkers")
+writeData(wb, "BAds FindMarkers", bad_mrk %>% rownames_to_column("Gene"))
+
+# 4. Brown adipocyte FindMarkers
+addWorksheet(wb, "BAds FindMarkers Filt")
+writeData(wb, "BAds FindMarkers Filt",   bad_mrk %>%
+    rownames_to_column("Gene") %>%
+    filter(avg_log2FC > 1, pct.1 > 0.3, p_val_adj <= 0.05))
+
+# Save Excel file
+saveWorkbook(
+  wb,
+  file = file.path(OUTPUT_DATA_DIR, "Supplemental_Table_6_heat_signature_generation_summary.xlsx"),
+  overwrite = TRUE
+)
+```
+
+# Session Info
+```{r}
+writeLines(
+  capture.output(sessionInfo()),
+  file.path(OUTPUT_DATA_DIR, "sessionInfo_heat_signature_generation.txt")
+)
+```
+

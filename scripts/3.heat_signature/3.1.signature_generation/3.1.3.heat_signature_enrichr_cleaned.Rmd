@@ -1,0 +1,289 @@
+---
+title: "EnrichR analysis of HEAT signature"
+output: html_document
+date: "2023-10-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(openxlsx)
+library(Seurat)
+library(tidyverse)
+library(enrichR)
+library(here)
+
+library(enrichR)
+library(dplyr)
+library(readr)
+library(openxlsx)
+library(stringr)
+library(purrr)
+library(tibble)
+
+# -------------------------------------------------------------------------
+# Define input and output paths
+# -------------------------------------------------------------------------
+
+HEAT_SIGNATURE_CSV <- here("output/3.heat_signature/data/heat_signature.csv")
+
+OUTPUT_DIR <- here("output/3.heat_signature/1.signature_generation/")
+
+dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
+
+# -------------------------------------------------------------------------
+# Check required inputs
+# -------------------------------------------------------------------------
+required_inputs <- c(
+  HEAT_SIGNATURE_CSV
+)
+
+missing_inputs <- required_inputs[!file.exists(required_inputs)]
+
+if (length(missing_inputs) > 0) {
+  stop(
+    "Missing input file(s):\n",
+    paste(missing_inputs, collapse = "\n")
+  )
+}
+
+```
+
+# Introduction
+
+This notebook performs enrichment analysis fo the HEAT signature using EnrichR.
+
+# --- Enrichr HEAT signature analysis ---
+```{r}
+## -----------------------------
+## Load HEAT signature genes
+## -----------------------------
+
+heat_genes_tbl <- read_csv(HEAT_SIGNATURE_CSV, show_col_types = FALSE)
+
+## Adjust this column name if needed
+heat_genes <- heat_genes_tbl %>%
+  pull(1) %>%
+  unique() %>%
+  na.omit()
+
+## -----------------------------
+## Enrichr setup
+## -----------------------------
+
+websiteLive <- getOption("enrichR.live")
+
+if (websiteLive) {
+  listEnrichrSites()
+  setEnrichrSite("Enrichr")
+}
+
+if (websiteLive) {
+  enrichr_dbs_available <- listEnrichrDbs()
+}
+
+dbs <- c(
+  "ChEA_2022",
+  "ENCODE_TF_ChIP-seq_2015",
+  "ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X",
+  "GO_Biological_Process_2025",
+  "GO_Cellular_Component_2025",
+  "GO_Molecular_Function_2025",
+  "KEGG_2021_Human",
+  "MSigDB_Hallmark_2020",
+  "Reactome_Pathways_2024",
+  "WikiPathways_2024_Human"
+)
+
+## -----------------------------
+## Run Enrichr
+## -----------------------------
+
+if (websiteLive) {
+  
+  access_time <- Sys.time()
+  
+  enriched <- enrichr(
+    genes = heat_genes,
+    databases = dbs,
+    background = background
+  )
+  
+  enriched <- lapply(names(enriched), function(db_name) {
+    
+    enriched[[db_name]] %>%
+      as_tibble() %>%
+      mutate(
+        database = db_name,
+        enrichr_accessed_at = access_time,
+        input_gene_set = "HEAT_signature",
+        n_input_genes = length(heat_genes),
+        .before = 1
+      )
+  }) %>%
+    setNames(names(enriched))
+}
+
+## -----------------------------
+## Clean worksheet names
+## Excel allows max 31 characters
+## -----------------------------
+
+make_sheet_name <- function(x) {
+  x %>%
+    str_replace_all("[\\[\\]\\*\\?/\\\\:]", "_") %>%
+    str_replace_all("GO_Biological_Process_2025", "GO_BP_2025") %>%
+    str_replace_all("GO_Cellular_Component_2025", "GO_CC_2025") %>%
+    str_replace_all("GO_Molecular_Function_2025", "GO_MF_2025") %>%
+    str_replace_all("ENCODE_TF_ChIP-seq_2015", "ENCODE_TF_2015") %>%
+    str_replace_all("ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X", "ENCODE_ChEA_TF") %>%
+    str_replace_all("Reactome_Pathways_2024", "Reactome_2024") %>%
+    str_replace_all("WikiPathways_2024_Human", "Wiki_2024") %>%
+    str_sub(1, 31)
+}
+
+sheet_names <- make_sheet_name(names(enriched))
+
+## -----------------------------
+## Create summary table
+## -----------------------------
+
+enrichr_summary <- bind_rows(enriched) %>%
+  group_by(database) %>%
+  summarise(
+    n_terms_total = n(),
+    n_terms_adj_p_lt_0_05 = sum(Adjusted.P.value < 0.05, na.rm = TRUE),
+    top_term = Term[which.min(Adjusted.P.value)],
+    top_adjusted_p_value = min(Adjusted.P.value, na.rm = TRUE),
+    top_combined_score = Combined.Score[which.max(Combined.Score)],
+    .groups = "drop"
+  ) %>%
+  arrange(top_adjusted_p_value)
+
+## -----------------------------
+## Optional combined significant table
+## -----------------------------
+
+enrichr_significant <- bind_rows(enriched) %>%
+  filter(Adjusted.P.value < 0.05) %>%
+  arrange(database, Adjusted.P.value)
+
+## -----------------------------
+## Metadata table
+## -----------------------------
+
+enrichr_metadata <- tibble(
+  field = c(
+    "analysis",
+    "input_gene_set",
+    "n_input_genes",
+    "background_used",
+    "enrichr_accessed_at",
+    "databases_queried"
+  ),
+  value = c(
+    "Enrichr enrichment analysis of HEAT signature genes",
+    "HEAT_signature",
+    as.character(length(heat_genes)),
+    ifelse(exists("background"), "Custom background supplied", "No custom background supplied"),
+    as.character(access_time),
+    paste(dbs, collapse = "; ")
+  )
+)
+
+readme_tbl <- tibble(
+  sheet = c(
+    "README",
+    "Enrichr_summary",
+    "Significant_terms",
+    "HEAT_genes",
+    "Enrichr_metadata",
+    "Database specific sheets"
+  ),
+  description = c(
+    "Description of workbook contents.",
+    "Summary of enrichment results by database.",
+    "All terms with adjusted P value < 0.05 across all queried databases.",
+    "Input HEAT signature genes used for enrichment.",
+    "Metadata documenting Enrichr access time, input gene set, and queried databases.",
+    "Full Enrichr result table for each individual database."
+  )
+)
+
+## -----------------------------
+## Save workbook
+## -----------------------------
+
+dir.create(
+  file.path(OUTPUT_DIR, "enrichr_results"),
+  showWarnings = FALSE,
+  recursive = TRUE
+)
+
+supp_xlsx <- file.path(
+  OUTPUT_DIR,
+  "enrichr_results",
+  "HEAT_signature_Enrichr.xlsx"
+)
+
+wb <- createWorkbook()
+
+header_style <- createStyle(
+  textDecoration = "bold",
+  border = "Bottom"
+)
+
+## Helper function
+add_clean_sheet <- function(wb, sheet_name, data) {
+  addWorksheet(wb, sheet_name)
+  writeData(wb, sheet_name, data)
+  addStyle(
+    wb,
+    sheet = sheet_name,
+    style = header_style,
+    rows = 1,
+    cols = seq_len(ncol(data)),
+    gridExpand = TRUE
+  )
+  freezePane(wb, sheet = sheet_name, firstRow = TRUE)
+  addFilter(wb, sheet = sheet_name, rows = 1, cols = seq_len(ncol(data)))
+  setColWidths(wb, sheet = sheet_name, cols = seq_len(ncol(data)), widths = "auto")
+}
+
+add_clean_sheet(wb, "README", readme_tbl)
+add_clean_sheet(wb, "Enrichr_summary", enrichr_summary)
+add_clean_sheet(wb, "Significant_terms", enrichr_significant)
+add_clean_sheet(wb, "HEAT_genes", tibble(gene = heat_genes))
+add_clean_sheet(wb, "Enrichr_metadata", enrichr_metadata)
+
+for (i in seq_along(enriched)) {
+  add_clean_sheet(
+    wb = wb,
+    sheet_name = sheet_names[i],
+    data = enriched[[i]]
+  )
+}
+
+saveWorkbook(wb, supp_xlsx, overwrite = TRUE)
+
+## -----------------------------
+## Save R object for reproducibility
+## -----------------------------
+
+write_rds(
+  x = enriched,
+  file = file.path(OUTPUT_DIR, "enrichr_results", "enriched_heat.rds")
+)
+```
+
+# Session Info
+```{r}
+writeLines(
+  capture.output(sessionInfo()),
+  file.path(OUTPUT_DIR, "enrichr_results", "sessionInfo_enrichr_heat.txt")
+)
+```
+

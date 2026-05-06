@@ -1,0 +1,316 @@
+---
+title: "25.CamaraFig3"
+output: html_document
+date: "2025-02-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(openxlsx)
+library(enrichR)
+library(Seurat)
+library(DESeq2)
+library(ggplot2)
+library(ggpubr)
+library(EnhancedVolcano)
+library(pheatmap)
+library(DGEobj.utils)
+library(VISION)
+library(cowplot)
+library(patchwork)
+
+
+# Always load tidyverse last because it usually masks other functions and we use the tidyverse ones more often.
+library(tidyverse)
+
+
+
+# --- Set up pathways ---
+INPUT_RDS <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
+
+## OUTPUTS 
+OUTPUT_DATA_DIR <- here("output", "4.downstream_pipelines", "de_analysis", "data")
+dir.create(OUTPUT_DATA_DIR, showWarnings = F, recursive = T)
+
+OUTPUT_FIGURE_DIR <- here("output", "4.downstream_pipelines", "de_analysis", "figures")
+dir.create(OUTPUT_FIGURE_DIR, showWarnings = F, recursive = T)
+
+OUT_DESEQ_STATS <- file.path(OUTPUT_DATA_DIR,"deseq2_stats.csv")
+OUT_DESEQ_OBJ <- file.path(OUTPUT_DATA_DIR, "deseq2_object_list.rds")
+```
+
+
+
+- **Figure 3:** Comparative analysis of white adipocyte clusters from deep neck relative to superficial neck adipose tissue; characterisation of local niche factors that may regulate thermogenesis
+    - Bar graph showing genes that are up vs. down per cell type in deep vs. superficial regions.
+    - Volcano plot showing up vs. down regulated genes in White Adipocytes
+    - Volcano plot showing up vs. down regulated genes in Adipocyte Progenitor Cells
+    - Heatmap showing deep vs. superficial white vs brown adipocytes (by sample)
+    - NicheNet to define ligans that better describe the transcriptomic differencesamong depots
+    - Cell-cell signaling (CellChat) to characterise different inputs-outputs from white adipocytes
+    - Cell-metabolite signaling (MEBOCOST) to characterise different inputs-outputs from white adipocytes
+    - Supplemental Figures:
+        - Characterisation of neuron associated cells - high UMI count
+        - Genes associated with superficial white adipocytes (TWIST, SIM1, etc.) are consistently expressed in superficial regions compared to other sites.
+
+# --- Load object ---
+```{r}
+# load seurat object
+s.object <- readRDS(INPUT_RDS)
+```
+
+
+# --- Pseudobulk at sample, celltype and neck_region level ---
+```{r}
+# Pseudobulk gene expression count matrix
+cts <- AggregateExpression(s.object,
+  assays = "RNA",
+  slot = "counts", # DESeq2 uses raw counts
+  return.seurat = F,
+  group.by = c("sample", "cell_type", "neck_region")
+)
+cts <- cts$RNA
+cts <- t(cts)
+cts <- as.data.frame(cts)
+cts <- round(cts) # Round as SoupX slightly transform the matrix, resulting in doubles
+rownames(cts)[1:10]
+```
+# --- Prepare metadata ---
+## --- Retrieve sample, cell and neck info ---
+```{r}
+# Separate the aggregated variables
+split_names <- strsplit(rownames(cts), "_")
+df <- t(as.data.frame(split_names))
+df <- as.data.frame(df)
+
+# Replace all "-" with "_" in every value of the dataframe
+colnames(df) <- c("sample", "cell_type", "neck_region")
+for (col in colnames(df)) {
+  df[[col]] <- gsub("-", "_", df[[col]])
+}
+df_rownames <- paste(df$sample, df[["cell_type"]], df$neck_region, sep = "_")
+rownames(df) <- df_rownames
+```
+
+## --- Merge df with s.object@metadata ---
+```{r}
+df <- left_join(df, s.object@meta.data, by = "sample", multiple = "first")
+colnames(df) <- gsub(".x", "", colnames(df)) # clean the names of duplicated columns
+rownames(df) <- df_rownames
+```
+
+## --- Format the matrices ---
+```{r}
+# Replace - at the sample names to keep only underscores _
+rownames(cts) <- gsub("-", "_", rownames(cts))
+```
+
+# --- Run DESEq2 ---
+In past iterations we have decided that a few parameters are a must. They are the formula correction for subject, use of sftype = poscounts, and removal of samples with low amount of nuclei.
+This will all be incorporated into a function that can be modified.
+
+## --- Create functions to clean the dataset ---
+```{r}
+# Replace special characters with underscore
+ReplaceSpecialChar <- function(string, replacement = "_") {
+  return(gsub("[ -]", replacement = replacement, x = string))
+}
+
+# This function takes as input the deseq2 input, count matrix and metadata, and output a filtered cts with samples > threshold.
+RemoveLowNucleiSample <- function(countData, colData, threshold = 3, grouping_levels = c("sample", "cell_type", "neck_region")) {
+  tryCatch(
+    {
+      # Check which cells to keep
+      metadata <- s.object@meta.data
+
+      # Count # cells per sample-cluster pair
+      grouped_metadata <- metadata %>%
+        dplyr::count(dplyr::across(all_of(grouping_levels))) %>% # count grouped by actual columns
+        dplyr::mutate(sample_grouping = do.call(paste, c(dplyr::across(all_of(grouping_levels)), sep = "_"))) %>%
+        dplyr::mutate(sample_grouping = ReplaceSpecialChar(sample_grouping))
+
+      # Filter by treshold
+      samples.to.exclude <- grouped_metadata %>%
+        dplyr::filter(n < threshold) %>%
+        pull(sample_grouping)
+
+      # Create a logical to filter countData and colData rows
+      # I noticed a mismatch in some cluster names due to - and _ differences. So the names are made equal.
+      rows_to_exclude <- ReplaceSpecialChar(rownames(countData)) %in% ReplaceSpecialChar(samples.to.exclude)
+
+      if (!all(ReplaceSpecialChar(rownames(countData)) %in% ReplaceSpecialChar(grouped_metadata$sample_grouping))) {
+        print(setdiff(rownames(countData), grouped_metadata$sample_grouping))
+        return(print("Samples from count matrix are not present in the metadata. Please check your data."))
+      }
+
+      # Return outputs
+      output <- list(
+        cts = countData[!rows_to_exclude, ],
+        meta = colData[!rows_to_exclude, ],
+        excluded_samples = grouped_metadata %>% dplyr::filter(sample_grouping %in% samples.to.exclude),
+        kept_samples = grouped_metadata %>% dplyr::filter(!sample_grouping %in% samples.to.exclude)
+      )
+
+      return(output)
+
+
+      ### FINISH CREATING DE GENE TABLE
+    },
+    error = function(e) {
+      # Print the error message
+      print(paste("Error occurred when cleaning sample :", conditionMessage(e)))
+      # Return NULL to continue the loop
+    }
+  )
+}
+```
+
+
+## --- Run DESeq with two thresholds ---
+```{r}
+# Create count matrix with desired threshold
+rm(filtered_data)
+# Initiate a list to store the results
+deseq2_list <- list()
+
+for (threshold in c(3, 10)) {
+  filtered_data <- RemoveLowNucleiSample(countData = cts, colData = df, threshold = threshold)
+  cluster_results <- list()
+
+  clusters <- unique(filtered_data$kept_samples$cell_type)
+
+  # -----------------------------
+#  Save summaries 
+# -----------------------------  
+  pseudobulk_subject_summary <- filtered_data$meta %>%
+  distinct(subject, cell_type, neck_region) %>%
+  count(cell_type, neck_region, name = "n_subjects") %>%
+  arrange(cell_type, neck_region)
+
+write_csv(
+  pseudobulk_subject_summary,
+  file.path(OUTPUT_DATA_DIR, "pseudobulk_subjects_by_cell_type_and_depot.csv")
+)
+
+  # Run DESeq2 for each cluster
+  for (cluster in clusters) {
+    # perform DESeq2 --------
+    # Create DESeq2 object
+    tryCatch(
+      {
+        counts_cluster <- filtered_data$cts %>%
+          dplyr::filter(grepl(cluster, rownames(filtered_data$cts))) %>%
+          t()
+        colData_cluster <- filtered_data$meta %>% dplyr::filter(grepl(cluster, rownames(filtered_data$meta)))
+
+        dds <- DESeqDataSetFromMatrix(
+          countData = counts_cluster,
+          colData = colData_cluster,
+          design = ~ subject + neck_region
+        )
+
+        # filter sample-cell pairs with at least 10 counts
+        keep <- rowSums(counts(dds)) >= 10
+        dds <- dds[keep, ]
+
+        # run DESeq2
+        dds <- DESeq(dds, sfType = "poscounts")
+        res <- results(dds, name = "neck_region_Superficial_vs_Deep")
+
+        ## Put it into the list
+        cluster_results[[cluster]] <- dds
+
+        ### FINISH CREATIGN DE GENE TABLE
+      },
+      error = function(e) {
+        # Print the error message
+        print(paste("Error occurred in DESeq2 run of ", cluster, ":", conditionMessage(e)))
+        # Return NULL to continue the loop
+      }
+    )
+  }
+  # Store data
+  deseq2_list[[paste0("Threshold_", threshold)]] <- cluster_results
+}
+```
+
+## --- Save the data ---
+```{r}
+saveRDS(deseq2_list, OUT_DESEQ_OBJ)
+```
+
+#--------------------------
+# Bar Graph showing the genes up and down per region
+#--------------------------
+Plotting how many differentially expressed genes (both up and down) that are present in each of the clusters. Note that the White Adipocytes have the highest number of differentially expressed genes and the Adipocyte Progenitors have the second most number of differentially expressed genes:
+
+```{r}
+# Load the Deseq2 results file
+deseq2_list <- readRDS(OUT_DESEQ_OBJ)
+```
+
+
+
+```{r}
+# Concatenate the DE results in a single object
+# Check the coefficients for the comparison
+rm(final_DE)
+
+cell_threshold <- 10
+filtered_data <- RemoveLowNucleiSample(countData = cts, colData = df, threshold = cell_threshold)
+
+for (cluster in names(deseq2_list$Threshold_10)) {
+  clust_condition <- filtered_data$meta %>%
+    dplyr::filter(cell_type == cluster) %>%
+    distinct(neck_region) %>%
+    pull(neck_region) %>%
+    sort()
+
+  j <- 1
+  while (j < length(clust_condition)) {
+    i <- j + 1
+    while (i <= length(clust_condition)) {
+      tryCatch(
+        {
+          # Extract the statistics from the dds object and add metadata information
+          res <- results(deseq2_list$Threshold_10[[cluster]], contrast = c("neck_region", clust_condition[j], clust_condition[i]))
+          res <- as.data.frame(res)
+          res$gene <- rownames(res)
+          res$cell_type <- cluster
+          res$contrast.1 <- clust_condition[j]
+          res$contrast.2 <- clust_condition[i]
+          res$min_cell_threshold <- cell_threshold
+
+          if (exists("final_DE")) {
+            final_DE <- rbind(final_DE, res)
+          } else {
+            final_DE <- res
+          }
+        },
+        error = function(e) {
+          # Print the error message
+          print(paste("Error occurred in comparison of ", cluster, " for ", clust_condition[j], "-", clust_condition[i], ":", conditionMessage(e)))
+          # Return NULL to continue the loop
+        }
+      )
+      i <- i + 1
+    }
+    j <- j + 1
+  }
+}
+```
+
+## --- Save the file with DESeq2 DGE for each cell type ---
+```{r}
+write_csv(final_DE, OUT_DESEQ_STATS)
+```
+
+## --- Session Info ---
+```{r}
+writeLines(
+  capture.output(sessionInfo()),
+  file.path(OUTPUT_DATA_DIR, "sessionInfo_pseudobulk_DE.txt")
+)
+```
+

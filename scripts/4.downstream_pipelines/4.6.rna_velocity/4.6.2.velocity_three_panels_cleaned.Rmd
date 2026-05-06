@@ -1,0 +1,616 @@
+---
+title: "RNA Velocity Analysis with scVelo"
+output: html_document
+---
+
+```{r}
+library(reticulate)
+
+# Clear cached Python from previous sessions
+Sys.setenv(RETICULATE_PYTHON = "")
+
+# Point to the desired Python interpreter (edit this to your local path)
+PYTHON_PATH <- "path/to/python.exe"
+reticulate::use_python(PYTHON_PATH, required = TRUE)
+
+# Verify that the correct Python was selected
+reticulate::py_config()
+
+
+
+#py_install("loompy", pip = TRUE, method = "virtualenv")
+
+```
+
+```{python}
+# Initial Python environment setup
+import random
+random.seed(1)
+py_version()
+
+```
+
+
+
+```{python}
+import numpy, scipy, sklearn, scanpy, anndata, h5py
+print(numpy.__version__, scipy.__version__, sklearn.__version__, scanpy.__version__)
+import matplotlib
+print( matplotlib.__version__)
+```
+```{bash}
+conda env export > environment.yml
+```
+
+```{r}
+getwd()
+```
+
+```{python}
+import sys
+!{sys.executable} -m pip install louvain
+```
+
+
+```{python}
+import numpy as np
+# Monkey patch for np.string_ and np.unicode_ if they don't exist
+if not hasattr(np, 'string_'):
+    np.string_ = np.bytes_
+if not hasattr(np, 'unicode_'):
+    np.unicode_ = np.str_
+import scanpy as sc
+import glob
+import os
+import anndata as ad
+
+# Path containing the .loom files (edit to your local path)
+data_path = "path/to/velocyto_results"
+
+# Directory where ALL new outputs will be saved (edit to your local path)
+out_dir = r"path/to/velocyto_results_output"
+os.makedirs(out_dir, exist_ok=True)
+
+# Auxiliary paths (edit to your local paths)
+cell_names_path     = os.path.join(data_path, "cell_names.txt")
+scvi_embeddings_csv = os.path.join(data_path, "scVI_embeddings.csv")
+seurat_metadata_csv = os.path.join(data_path, "seurat_metadata.csv")
+cell_type_meta_path = "path/to/cell_type_metadata.csv"
+
+# Change to the data directory
+os.chdir(data_path)
+
+# List all .loom files
+loom_files = glob.glob("*.loom")
+
+adatas = []
+for file in loom_files:
+    sample_name = file.replace('.loom', '')
+    
+    # Read the loom file
+    adata = sc.read_loom(file, sparse=True)
+    
+    # Update cell names to include the sample name
+    adata.obs_names = [f"{cell}_{sample_name}" for cell in adata.obs_names]
+    
+    # Save original gene names (may not be unique)
+    adata.var['original_gene'] = adata.var_names
+    
+    # Make gene names unique (required for merge)
+    adata.var_names_make_unique()
+    
+    print(f"{file}: {adata.shape[0]} cells, {adata.shape[1]} genes")
+    
+    adatas.append(adata)
+
+# Concatenate AnnData objects
+combined_adata = ad.concat(
+    adatas, 
+    axis=0, 
+    join='outer', 
+    label="sample", 
+    keys=[f.replace(".loom", "") for f in loom_files]
+)
+
+print(f"Combined AnnData: {combined_adata.shape[0]} cells, {combined_adata.shape[1]} genes")
+print(combined_adata.obs_names[:5].tolist())
+
+# Adjust cell names
+combined_adata.obs_names = [
+    name.split(":", 1)[1].replace("x_", "-1_") 
+    for name in combined_adata.obs_names
+]
+
+import pandas as pd
+
+# Read cell names from an external file
+with open(cell_names_path, 'r') as f:
+    cell_names = [line.strip() for line in f]
+
+# Filter the AnnData keeping only cells present in the file
+filtered_adata = combined_adata[combined_adata.obs_names.isin(cell_names)].copy()
+
+print(filtered_adata)
+
+# Comparison between cell sets
+adata_cells = set(combined_adata.obs_names)
+cell_names_set = set(cell_names)
+common_cells = adata_cells & cell_names_set
+unique_to_adata = adata_cells - cell_names_set
+unique_to_cell_names = cell_names_set - adata_cells
+
+print(f"Common cells: {len(common_cells)}")
+print(f"Unique to combined_adata: {len(unique_to_adata)}")
+print(f"Unique to cell_names: {len(unique_to_cell_names)}")
+
+# Display some examples
+unique_to_cell_names_sorted = sorted(unique_to_cell_names)
+print("\n".join(unique_to_cell_names_sorted[:55]))
+
+# Extract suffixes from the unique names
+sufixos = [nome.split("-1_", 1)[1] for nome in unique_to_cell_names_sorted]
+sufixos_unicos = sorted(set(sufixos))
+print("Unique suffixes present in unique_to_cell_names:")
+print("\n".join(sufixos_unicos))
+```
+
+```{python}
+# Load scVI embeddings
+scVI_df = pd.read_csv(scvi_embeddings_csv, index_col=0)
+
+# Align with filtered_adata
+scVI_df = scVI_df.loc[filtered_adata.obs.index]
+filtered_adata.obsm["X_scVI"] = scVI_df.values
+filtered_adata
+```
+
+```{python}
+# Read Seurat metadata
+metadata = pd.read_csv(seurat_metadata_csv, index_col=0)
+
+# Filter metadata for the AnnData cells
+filtered_metadata = metadata.loc[filtered_adata.obs_names]
+filtered_adata.obs = filtered_metadata
+
+print("Cells match?", filtered_adata.obs.index.equals(metadata.loc[filtered_adata.obs_names].index))
+filtered_adata
+```
+
+```{python}
+# === Add cell_type_short metadata from cell_type_metadata.csv ===
+cell_type_meta = pd.read_csv(cell_type_meta_path, index_col="barcode")
+
+# Reindex by the AnnData index to align cells
+cell_type_meta_aligned = cell_type_meta.reindex(filtered_adata.obs_names)
+
+# Add only the cell_type_short column (the others already exist in the dataset)
+filtered_adata.obs["cell_type_short"] = cell_type_meta_aligned["cell_type_short"].astype("category")
+
+# Quick check
+print("Unique values of cell_type_short:")
+print(filtered_adata.obs["cell_type_short"].value_counts(dropna=False))
+print("Total NaN in cell_type_short:", filtered_adata.obs["cell_type_short"].isna().sum())
+```
+
+
+```{python}
+# === Diagnostic: cell_type_short vs cell_type_group ===
+
+# 0. External CSV statistics (before reindex)
+csv_raw = pd.read_csv(cell_type_meta_path, index_col="barcode")
+print(f">>> External CSV statistics (cell_type_metadata.csv):")
+print(f"  Rows in CSV:                       {len(csv_raw)}")
+print(f"  Unique barcodes in CSV:            {csv_raw.index.nunique()}")
+print(f"  Samples (clean_sample) in CSV:     {csv_raw['clean_sample'].nunique()}")
+print(f"  List of samples in CSV:")
+for s in sorted(csv_raw['clean_sample'].unique()):
+    print(f"    - {s}")
+print()
+
+print(f">>> All cell_type_short categories in the CSV:")
+print(csv_raw['cell_type_short'].value_counts(dropna=False))
+print()
+
+# 1. Barcode alignment between CSV and AnnData
+adata_barcodes = set(filtered_adata.obs_names)
+csv_barcodes   = set(csv_raw.index.astype(str))
+
+n_overlap     = len(adata_barcodes & csv_barcodes)
+n_only_adata  = len(adata_barcodes - csv_barcodes)
+n_only_csv    = len(csv_barcodes - adata_barcodes)
+
+print(">>> Barcode overlap:")
+print(f"  In both (adata ∩ csv):                {n_overlap}")
+print(f"  Only in AnnData (no cell_type_short): {n_only_adata}")
+print(f"  Only in CSV (didn't reach adata):     {n_only_csv}")
+print()
+
+if n_only_adata > 0:
+    only_adata_sorted = sorted(adata_barcodes - csv_barcodes)
+    print("  Examples of AnnData barcodes missing in the CSV (first 5):")
+    for b in only_adata_sorted[:5]:
+        print(f"    {b}")
+    # Check whether it is a sample-related issue
+    suf_only_adata = sorted({b.split("-1_", 1)[1] for b in only_adata_sorted if "-1_" in b})
+    print(f"  Samples of these missing barcodes: {suf_only_adata}")
+    print()
+
+if n_only_csv > 0:
+    only_csv_sorted = sorted(csv_barcodes - adata_barcodes)
+    print("  Examples of CSV barcodes missing in AnnData (first 5):")
+    for b in only_csv_sorted[:5]:
+        print(f"    {b}")
+    print()
+
+# 2. NaN in cell_type_short after the merge
+n_total   = filtered_adata.shape[0]
+n_filled  = int(filtered_adata.obs["cell_type_short"].notna().sum())
+n_missing = int(filtered_adata.obs["cell_type_short"].isna().sum())
+print(f">>> In filtered_adata ({n_total} cells):")
+print(f"  With cell_type_short:    {n_filled}")
+print(f"  Without cell_type_short: {n_missing}")
+print()
+
+# 3. Cross-tab cell_type_group × cell_type_short (adipocytes only in group)
+adipo_groups = ["White_adipocyte", "Brown_adipocyte", "PreAdipocyte"]
+mask_adipo_group = filtered_adata.obs["cell_type_group"].isin(adipo_groups)
+adipo_obs = filtered_adata.obs.loc[mask_adipo_group]
+
+print(">>> cell_type_group among adipocytes (all cells in dataset):")
+print(adipo_obs["cell_type_group"].value_counts(dropna=False))
+print()
+
+print(">>> cell_type_short among adipocytes (according to cell_type_group):")
+print(adipo_obs["cell_type_short"].value_counts(dropna=False))
+print()
+
+print(">>> Cross-tab cell_type_group × cell_type_short (adipocytes):")
+print(pd.crosstab(
+    adipo_obs["cell_type_group"],
+    adipo_obs["cell_type_short"].fillna("__NaN__"),
+    dropna=False,
+))
+```
+
+
+```{python}
+import scvelo as scv
+import scanpy as sc
+
+# Basic preprocessing
+scv.pl.proportions(filtered_adata)
+scv.pp.filter_genes(filtered_adata, min_shared_counts=20)
+scv.pp.normalize_per_cell(filtered_adata)
+scv.pp.filter_genes_dispersion(filtered_adata, n_top_genes=10000)
+scv.pp.log1p(filtered_adata)
+
+# Compute neighbors using scVI embeddings and generate UMAP
+sc.pp.neighbors(filtered_adata, n_neighbors=30, use_rep="X_scVI", n_pcs=None)
+sc.tl.umap(filtered_adata)
+
+# Moments and velocity
+scv.pp.moments(filtered_adata)
+scv.tl.velocity(filtered_adata)
+scv.tl.velocity_graph(filtered_adata)
+
+# Cell type counts
+counts = filtered_adata.obs["cell_type_group"].value_counts()
+counts.loc[["White_adipocyte", "Brown_adipocyte", "PreAdipocyte"]]
+```
+
+
+```{python}
+# === Helper function to generate a velocity plot on a subset ===
+# Imports guaranteed in this chunk (in case the Python state was reset)
+import os
+import warnings
+import numpy as np
+import pandas as pd
+import scanpy as sc
+import scvelo as scv
+import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
+from contextlib import contextmanager
+from pandas.core.arrays.categorical import CategoricalAccessor
+
+# Silence scvelo DeprecationWarning (auto computation of PCA/neighbors)
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="scvelo")
+warnings.filterwarnings("ignore", category=FutureWarning,    module="scvelo")
+
+# Color palette for cell_type_short (used across the three plots)
+adipocyte_palette = {
+    "WAds":   "#ffe65a",
+    "BAds":   "#97600f",
+    "PreAds": "#a4c76d",
+}
+
+# Patch used by rank_velocity_genes in some pandas versions
+@contextmanager
+def temporary_categorical_patch():
+    original = CategoricalAccessor._delegate_property_set
+    def patched(self, name, new_values):
+        if name == "categories":
+            self._parent = self._parent.rename_categories(new_values)
+            return
+        return original(self, name, new_values)
+    CategoricalAccessor._delegate_property_set = patched
+    yield
+    CategoricalAccessor._delegate_property_set = original
+
+
+def plot_velocity_subset(adata_full, subset_mask, title, outfile,
+                          color_key="cell_type_short",
+                          palette=adipocyte_palette,
+                          n_neighbors=15,
+                          n_pcs=30):
+    """
+    Create a subset, recompute neighbors/UMAP/moments/velocity graph
+    and generate the RNA velocity plot with annotated centroids.
+    Saves the figure as a PDF at the provided path.
+    """
+    # Safety: local imports (in case the function is called in a fresh kernel)
+    import os
+    import numpy as np
+    import scanpy as sc
+    import scvelo as scv
+    import matplotlib.pyplot as plt
+    import matplotlib.patheffects as path_effects
+
+    sub = adata_full[subset_mask, :].copy()
+    print(f"[{title}] initial subset: {sub.shape[0]} cells")
+    if sub.shape[0] < 10:
+        print(f"[{title}] subset too small, skipping.")
+        return None
+
+    # ---- Keep only cells whose cell_type_short is in the palette ----
+    # (safety: the subset_mask should already ensure this, but if someone
+    #  calls the function with a different mask, the filter below avoids
+    #  a color-related KeyError)
+    if color_key in sub.obs.columns and palette is not None:
+        keep = sub.obs[color_key].isin(list(palette.keys()))
+        n_drop = int((~keep).sum())
+        if n_drop > 0:
+            print(f"[{title}] dropping {n_drop} cells with {color_key} outside the palette")
+        sub = sub[keep, :].copy()
+        print(f"[{title}] subset after palette filter: {sub.shape[0]} cells")
+        if sub.shape[0] < 10:
+            print(f"[{title}] subset too small after palette filter, skipping.")
+            return None
+
+    # Make sure the color column is categorical with only the present classes
+    if color_key in sub.obs.columns:
+        sub.obs[color_key] = sub.obs[color_key].astype("category")
+        sub.obs[color_key] = sub.obs[color_key].cat.remove_unused_categories()
+
+    # Clear old colors that may be in .uns to avoid mismatches
+    uns_color_key = f"{color_key}_colors"
+    if uns_color_key in sub.uns:
+        del sub.uns[uns_color_key]
+
+    # Recompute neighbors on the subset, UMAP and velocity graph
+    n_neigh = min(n_neighbors, max(2, sub.shape[0] - 1))
+    sc.pp.neighbors(sub, use_rep="X_scVI", n_neighbors=n_neigh, n_pcs=30,
+                    random_state=0)
+    # Use flavor explicitly to avoid the leiden FutureWarning
+    try:
+        sc.tl.leiden(sub, key_added="scVI_clusters",
+                     flavor="igraph", n_iterations=2, directed=False,
+                     random_state=0)
+    except TypeError:
+        # Older scanpy versions don't support flavor='igraph'
+        sc.tl.leiden(sub, key_added="scVI_clusters", random_state=0)
+    sc.tl.umap(sub, random_state=0)
+
+    scv.pp.moments(sub)
+    scv.tl.velocity_graph(sub)
+
+    with temporary_categorical_patch():
+        try:
+            scv.tl.rank_velocity_genes(sub, min_corr=0.3)
+        except Exception as e:
+            print(f"[{title}] rank_velocity_genes failed (non-critical): {e}")
+
+    # Create the figure
+    fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=600)
+
+    # Build the palette in the exact order of the present categories,
+    # falling back to gray for any category without a defined color (it
+    # shouldn't happen after the filter above, but it's an extra safety net).
+    cats_in_order = list(sub.obs[color_key].cat.categories)
+    palette_list = [palette.get(c, "#cccccc") for c in cats_in_order]
+
+    # UMAP colored by cell_type_short with a custom palette
+    sc.pl.umap(
+        sub,
+        color=color_key,
+        palette=palette_list,
+        legend_loc="right margin",
+        title=title,
+        show=False,
+        ax=ax,
+    )
+
+    # Velocity arrows on top
+    scv.pl.velocity_embedding_grid(
+        sub,
+        basis="umap",
+        color=color_key,
+        palette=palette_list,
+        ax=ax,
+        arrow_length=5,
+        show=False,
+        density=1,
+        linewidth=0.5,
+        arrow_size=1,
+        smooth=1.5,
+        min_mass=10,
+        arrow_color="black",
+        alpha=0.6,
+    )
+
+    # Centroid annotations
+    cell_types = sub.obs[color_key].unique()
+    for cell_type in cell_types:
+        mask = sub.obs[color_key] == cell_type
+        umap_coords = sub.obsm["X_umap"][mask.values] if hasattr(mask, "values") else sub.obsm["X_umap"][mask]
+        if umap_coords.size == 0:
+            continue
+        x_centroid = np.median(umap_coords[:, 0])
+        y_centroid = np.median(umap_coords[:, 1])
+        ax.annotate(
+            str(cell_type),
+            (x_centroid, y_centroid),
+            fontweight="bold",
+            fontsize=10,
+            color="black",
+            ha="center",
+            va="center",
+            path_effects=[path_effects.withStroke(linewidth=3, foreground="white")],
+        )
+
+    fig.tight_layout()
+    plt.savefig(outfile, format="pdf", bbox_inches="tight", pad_inches=0.05)
+    print("Saved to:", outfile)
+    plt.show()
+    plt.close(fig)
+    return sub
+```
+
+
+```{python}
+# === Plot 1: ALL nuclei, only WAds + PreAds + BAds (cell_type_short) ===
+selected_short = ["WAds", "PreAds", "BAds"]
+mask_short = filtered_adata.obs["cell_type_short"].isin(selected_short)
+
+outfile_1 = os.path.join(out_dir, "velocity_adipocytes_all.pdf")
+adp_all = plot_velocity_subset(
+    filtered_adata,
+    subset_mask=mask_short,
+    title="RNA Velocity – Adipocytes (all samples)",
+    outfile=outfile_1,
+)
+```
+
+
+```{python}
+# === Diagnostic: compare the subsets used in Plot 2 and Plot 3 ===
+# (check whether Dsubject3_BAT and neck_region == "Deep" pick the same cells
+#  or if there is a bug)
+
+# Inspect the unique values of both columns (only inside the adipocyte subset)
+adipo_obs = filtered_adata.obs.loc[mask_short]
+
+print(">>> Unique values of 'sample' in WAds/PreAds/BAds cells:")
+print(adipo_obs["sample"].value_counts(dropna=False))
+print()
+print(">>> Unique values of 'neck_region' in WAds/PreAds/BAds cells:")
+print(adipo_obs["neck_region"].value_counts(dropna=False))
+print()
+
+# Cross-tab: sample vs neck_region
+print(">>> Cross-tab sample × neck_region (adipocytes only):")
+print(pd.crosstab(adipo_obs["sample"], adipo_obs["neck_region"], dropna=False))
+print()
+
+# Direct comparison of the two masks
+mask_sample = filtered_adata.obs["sample"] == "Dsubject3_BAT"
+mask_deep   = filtered_adata.obs["neck_region"] == "Deep"
+
+mask_plot2 = mask_short & mask_sample
+mask_plot3 = mask_short & mask_deep
+
+n2 = int(mask_plot2.sum())
+n3 = int(mask_plot3.sum())
+n_overlap   = int((mask_plot2 & mask_plot3).sum())
+n_only_2    = int((mask_plot2 & ~mask_plot3).sum())
+n_only_3    = int((~mask_plot2 & mask_plot3).sum())
+
+print(f"Plot 2 (Dsubject3_BAT): {n2} cells")
+print(f"Plot 3 (Deep):          {n3} cells")
+print(f"  Overlap (in both):    {n_overlap}")
+print(f"  Only in Plot 2:       {n_only_2}")
+print(f"  Only in Plot 3:       {n_only_3}")
+
+if n_only_2 == 0 and n_only_3 == 0:
+    print("\n*** The two subsets are IDENTICAL — not a bug, they are literally "
+          "the same cells. ***")
+elif n_only_2 == 0:
+    print("\n*** Plot 2 is contained in Plot 3. ***")
+elif n_only_3 == 0:
+    print("\n*** Plot 3 is contained in Plot 2. ***")
+else:
+    print("\n*** Different subsets — if the plots come out the same, there's "
+          "another problem. ***")
+```
+
+
+```{python}
+mask_sample = filtered_adata.obs["sample"] == "Dsubject3_BAT"
+mask_plot2 = mask_short & mask_sample
+
+print("Cells in the Dsubject3_BAT subset:", int(mask_plot2.sum()))
+
+outfile_2 = os.path.join(out_dir, "velocity_adipocytes_Dsubject3_BAT.pdf")
+adp_dsubject3 = plot_velocity_subset(
+    filtered_adata,
+    subset_mask=mask_plot2,
+    title="RNA Velocity – Adipocytes (Dsubject3_BAT)",
+    outfile=outfile_2,
+)
+```
+
+
+```{python}
+# === Plot 3: Only neck_region == "Deep", with WAds + PreAds + BAds ===
+mask_deep = filtered_adata.obs["neck_region"] == "Deep"
+mask_plot3 = mask_short & mask_deep
+
+print("Cells in the Deep subset:", int(mask_plot3.sum()))
+
+outfile_3 = os.path.join(out_dir, "velocity_adipocytes_Deep.pdf")
+adp_deep = plot_velocity_subset(
+    filtered_adata,
+    subset_mask=mask_plot3,
+    title="RNA Velocity – Adipocytes (Deep neck region)",
+    outfile=outfile_3,
+)
+```
+```{python}
+# Full cross-tab: cell_type_short × cell_type_res.1.6
+ct = pd.crosstab(
+    filtered_adata.obs["cell_type_short"],
+    filtered_adata.obs["cell_type_res.1.6"],
+    dropna=False,
+)
+# Show only the columns that receive at least one cell from WAds, BAds or PreAds
+mask_rows = ct.index.isin(["WAds", "BAds", "PreAds"])
+mask_cols = (ct.loc[mask_rows].sum(axis=0) > 0)
+print(ct.loc[mask_rows, mask_cols])
+print()
+
+# Direct check: does WAds match White_adipocyte_* exactly?
+print(">>> For each short category, which cell_type_res.1.6 it contains:")
+for short in ["WAds", "BAds", "PreAds"]:
+    res16_vals = (
+        filtered_adata.obs.loc[filtered_adata.obs["cell_type_short"] == short,
+                               "cell_type_res.1.6"]
+        .value_counts()
+    )
+    print(f"\n  {short}:")
+    print(res16_vals[res16_vals > 0])
+
+print("\n>>> And the reverse — which short does each White_*/Brown_*/PreAdipocyte_* point to?")
+for prefix in ["White_adipocyte", "Brown_adipocyte", "PreAdipocyte"]:
+    res16_cats = [
+        c for c in filtered_adata.obs["cell_type_res.1.6"].cat.categories
+        if str(c).startswith(prefix)
+    ]
+    for c in res16_cats:
+        shorts = (
+            filtered_adata.obs.loc[filtered_adata.obs["cell_type_res.1.6"] == c,
+                                   "cell_type_short"]
+            .value_counts()
+        )
+        shorts = shorts[shorts > 0]
+        print(f"  {c}:  {dict(shorts)}")
+```

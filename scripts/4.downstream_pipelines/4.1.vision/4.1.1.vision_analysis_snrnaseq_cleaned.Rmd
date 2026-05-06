@@ -1,0 +1,325 @@
+---
+title: "Run VISION in human snRNAseq objects"
+output: html_document
+date: "2024-12-02"
+---
+
+# Introduction
+
+This notebook prepares selected GMT signature files and runs VISION on
+preprocessed Seurat objects.
+
+The workflow is organized into three parts:
+
+1. Define paths and helper functions.
+2. Build GMT signatures needed downstream.
+3. Run VISION on human and mouse Seurat objects.
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(Seurat)
+library(VISION)
+library(here)
+library(msigdbr)
+library(readr)
+library(openxlsx)
+library(tidyverse)
+
+# -------------------------------------------------------------------------
+# Define inputs and outputs
+# -------------------------------------------------------------------------
+today <- format(Sys.Date(), "%Y_%m_%d")
+
+# External signature source
+BATLAS_EXCEL <- here("data/BATLAS_signature.xlsx")
+
+# Signature files
+HEAT_SIGNATURE <- here("output/3.heat_signature/data/heat_signature.gmt")
+MOUSE_HEAT_GMT <- here("output/3.heat_signature/data/mouse_heat.gmt")
+UCP1_CORR_SIGNATURE <- here("output/3.heat_signature/data/non_HEAT_UCP1_corr_signature.gmt")
+
+BATLAS_SIGNATURE <- here("data/8.gmt_signatures/batlas.gmt" ) 
+HALLMARK_SIGNATURE <- here("data/8.gmt_signatures/hallmark_subset.gmt")
+GOBP_SIGNATURE <- here("data/8.gmt_signatures/gobp_subset.gmt")
+
+# Seurat inputs
+HUMAN_SEURAT_DIR <- here("output/4.downstream_pipelines/vision/data/cleaned_datasets_human") 
+CAMARAH_RDS <- file.path(HUMAN_SEURAT_DIR, "CamaraH_Dataset.rds") 
+SHAMSI_RDS <- here("output/4.downstream_pipelines/vision/data/cleaned_datasets_mouse/ShamsiF_Dataset.rds") 
+ZHANG_BAT_RDS_YOUNG <- "~/Projects/Joy_2025/data/Zhang_2025/GSE247719_PanSci_07_BAT_adata_young_wt.rds"
+
+# Output directories
+VIS_OBJ_OUTPUT_DIR <- here("output", "4.downstream_pipelines", "vision", "data", "vision_objects")
+GMT_SIGNATURES_OUTPUT_DIR <- here("output", "4.downstream_pipelines", "vision", "data", "vision_gmt_signatures")
+
+dir.create(VIS_OBJ_OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(GMT_SIGNATURES_OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
+```
+
+# Helper functions
+
+```{r}
+# Write one GMT line from a gene vector
+make_gmt_line <- function(signature_name, description, genes) {
+  paste(signature_name, description, paste(genes, collapse = "\t"), sep = "\t")
+}
+
+# Build GMT lines from selected MSigDB collections
+build_msigdb_gmt <- function(msig_table, selected_sets) {
+  gmt_lines <- vector("character", length(selected_sets))
+
+  for (i in seq_along(selected_sets)) {
+    gs_name <- selected_sets[i]
+
+    sig_data <- msig_table %>%
+      filter(gs_name == !!gs_name)
+
+    if (nrow(sig_data) == 0) {
+      stop("No genes found for signature: ", gs_name)
+    }
+
+    description <- sig_data %>%
+      mutate(description = paste(gs_name, gs_id, db_version, sep = "_")) %>%
+      distinct(description) %>%
+      pull(description)
+
+    gmt_lines[i] <- make_gmt_line(
+      signature_name = gs_name,
+      description = description,
+      genes = sig_data$gene_symbol
+    )
+  }
+
+  gmt_lines
+}
+
+# Run VISION on one Seurat object and save the resulting VISION object
+runAndSaveVISION <- function(seurat_file,
+                             Signatures,
+                             subset_adipocytes = FALSE,
+                             vis_output_dir = VIS_OBJ_OUTPUT_DIR,
+                             skip_existing = TRUE,
+                             subset_large_seurat = TRUE,
+                             n_pool = 100000,
+                             seed = 1234) {
+
+  dir.create(vis_output_dir, recursive = TRUE, showWarnings = FALSE)
+
+  file_basename <- tools::file_path_sans_ext(basename(seurat_file))
+  output_file <- file.path(vis_output_dir, paste(file_basename, "VISION.rds", sep = "_"))
+  log_file <- file.path(vis_output_dir, paste(file_basename, "VISION.log", sep = "_"))
+
+  message("Analyzing ", basename(seurat_file))
+
+  if (skip_existing && file.exists(output_file)) {
+    message("Skipping ", basename(seurat_file), " (output already exists)")
+    return(NULL)
+  }
+
+  tryCatch(
+    {
+      s.object <- readRDS(seurat_file)
+
+      if (subset_adipocytes) {
+        s.object <- subset(s.object, idents = c("White Adipocytes", "Brown Adipocytes"))
+      }
+
+      if (subset_large_seurat && ncol(s.object) > n_pool) {
+        set.seed(seed)
+        s.object <- subset(s.object, cells = sample(colnames(s.object), size = n_pool))
+      }
+
+      sink(log_file, append = TRUE)
+      message("Started at ", Sys.time())
+      sink()
+
+      vis <- Vision(
+        s.object,
+        signatures = Signatures,
+        dimRed = "umap",
+        dimRedComponents = 2
+      )
+      vis <- analyze(vis)
+
+      saveRDS(vis, output_file)
+      message("Saved: ", output_file)
+      
+      vision_run_summary <- tibble::tibble(
+        dataset = file_basename,
+        n_cells_input = ncol(readRDS(seurat_file)),
+        n_cells_analyzed = ncol(s.object),
+        subset_adipocytes = subset_adipocytes,
+        subset_large_seurat = subset_large_seurat,
+        n_pool = n_pool,
+        signatures = paste(basename(Signatures), collapse = ";"),
+        output_file = output_file
+      )
+      
+      readr::write_csv(
+        vision_run_summary,
+        file.path(vis_output_dir, paste(file_basename, "VISION_run_summary.csv", sep = "_"))
+      )
+      
+    },
+    error = function(e) {
+      err_msg <- paste("Error occurred with", basename(seurat_file), ":", conditionMessage(e))
+      message(err_msg)
+
+      sink(log_file, append = TRUE)
+      message(err_msg)
+      sink()
+    }
+  )
+}
+```
+
+# Build signature files
+
+## BATLAS signature
+
+```{r}
+BATLAS <- read.xlsx(BATLAS_EXCEL) %>%
+  select(1, 2)
+
+names(BATLAS) <- c("white_ad_genes", "brown_ad_genes")
+
+batlas_description <- paste(
+  "BATLAS",
+  "97_thermo_associated_genes",
+  "https://www.cell.com/cell-reports/fulltext/S2211-1247(18)31489-X",
+  sep = "_"
+)
+
+batlas_line <- make_gmt_line(
+  signature_name = "BATLAS",
+  description = batlas_description,
+  genes = BATLAS$brown_ad_genes
+)
+
+write_lines(batlas_line, BATLAS_SIGNATURE)
+```
+
+## Hallmark signatures from MSigDB
+
+```{r}
+msig_hallmark <- msigdbr(
+  species = "Homo sapiens",
+  collection = "H"
+)
+
+hallmark_subcollections <- c(
+  "HALLMARK_ADIPOGENESIS",
+  "HALLMARK_FATTY_ACID_METABOLISM",
+  "HALLMARK_G2M_CHECKPOINT",
+  "HALLMARK_GLYCOLYSIS",
+  "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+  "HALLMARK_REACTIVE_OXYGEN_SPECIES_PATHWAY",
+  "HALLMARK_UNFOLDED_PROTEIN_RESPONSE"
+)
+
+hallmark_gmt <- build_msigdb_gmt(
+  msig_table = msig_hallmark,
+  selected_sets = hallmark_subcollections
+)
+
+write_lines(hallmark_gmt, HALLMARK_SIGNATURE)
+```
+
+## GOBP signatures from MSigDB
+
+```{r}
+msig_gobp <- msigdbr(
+  species = "Homo sapiens",
+  collection = "C5"
+)
+
+gobp_subcollections <- c(
+  "GOBP_RESPONSE_TO_TOPOLOGICALLY_INCORRECT_PROTEIN",
+  "GOBP_RESPONSE_TO_HEAT",
+  "GOBP_PROTEIN_FOLDING",
+  "GOBP_CELLULAR_RESPIRATION",
+  "GOBP_AEROBIC_RESPIRATION",
+  "GOBP_CELLULAR_RESPONSE_TO_PEPTIDE_HORMONE_STIMULUS",
+  "GOBP_ADAPTIVE_THERMOGENESIS",
+  "GOBP_NEGATIVE_REGULATION_OF_COLD_INDUCED_THERMOGENESIS",
+  "GOBP_POSITIVE_REGULATION_OF_COLD_INDUCED_THERMOGENESIS"
+)
+
+gobp_gmt <- build_msigdb_gmt(
+  msig_table = msig_gobp,
+  selected_sets = gobp_subcollections
+)
+
+write_lines(gobp_gmt, GOBP_SIGNATURE)
+```
+
+# Run VISION in human Seurat objects
+
+## Discover input Seurat files
+
+```{r}
+seurat_files <- list.files(HUMAN_SEURAT_DIR, full.names = TRUE)
+```
+
+## Run HEAT only for non-CamaraH human datasets
+
+```{r}
+Signatures <- c(HEAT_SIGNATURE)
+
+seurat_files_wo_camarah <- seurat_files[
+  !grepl("CamaraH", basename(seurat_files), ignore.case = TRUE)
+]
+
+for (f in seurat_files_wo_camarah) {
+  runAndSaveVISION(
+    seurat_file = f,
+    Signatures = Signatures,
+    skip_existing = FALSE
+  )
+}
+```
+
+## Run the full signature panel for CamaraH
+
+```{r}
+Signatures <- c(
+  HEAT_SIGNATURE,
+  UCP1_CORR_SIGNATURE,
+  BATLAS_SIGNATURE,
+  HALLMARK_SIGNATURE,
+  GOBP_SIGNATURE
+)
+
+runAndSaveVISION(
+  seurat_file = CAMARAH_RDS,
+  Signatures = Signatures,
+  vis_output_dir = VIS_OBJ_OUTPUT_DIR,
+  skip_existing = FALSE
+)
+
+sapply(Signatures, readLines)
+```
+
+# Run VISION in mouse Seurat objects
+
+## Shamsi 2021
+
+```{r}
+runAndSaveVISION(
+  seurat_file = SHAMSI_RDS,
+  Signatures = MOUSE_HEAT_GMT,
+  subset_adipocytes = FALSE,
+  vis_output_dir = VIS_OBJ_OUTPUT_DIR, skip_existing = TRUE
+)
+```
+
+# Session Info
+```{r}
+writeLines(
+  capture.output(sessionInfo()),
+  file.path(VIS_OBJ_OUTPUT_DIR, "sessionInfo_vision_analysis.txt")
+)
+```
+

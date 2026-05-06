@@ -1,0 +1,996 @@
+---
+title: "Plots for Supplementary Figure 1"
+output: html_document
+date: "2025-01-14"
+---
+
+# Setup
+```{r setup, include=FALSE}
+library(Seurat)
+library(ggplot2)
+library(ggpubr)
+library(tidyverse)
+library(openxlsx)
+library(RColorBrewer)
+library(speckle)
+library(ggnewscale)
+library(patchwork)
+
+
+
+theme_no_axis <- function() {
+  theme(
+    axis.title   = element_blank(),
+    axis.text    = element_blank(),
+    axis.ticks   = element_blank(),
+    axis.line    = element_blank()
+  )
+}
+
+# OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
+source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
+
+# --- Setup paths ---
+## Inputs
+SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
+
+GAVRILA_TPM <- here("../Internal_Datasets/Gavrila Lab Bulk RNAseq Data/TPM_values.csv")
+DIN_CTS <- here("data/5.published_datasets/Public_BulkRNAseq/Din 2018/Din2018_countmatrix.txt")
+XUE_CTS <- here("data/6.internal_datasets/Tseng_Datasets/Ruidan Xue's Microarray data/20 arrays for hBAT hWAT tissues/Supplementary_Table_cervical_at_microarray.xlsx")
+REF_MAP_APSC <- here("../Output/1 - Figure and Analysis/36.ReferenceMapping/aspc_combined.rds") #UPDATE THIS
+REF_MAP_ADIPO <- here("../Output/1 - Figure and Analysis/36.ReferenceMapping/adipo_combined.rds") # UPDATE THIS
+
+PROPELLER_PROPORTIONS <- here("output/2.sobject_characterization/propeller/data/propeller_cellular_proportions_table.csv" )
+PROPELLER_STATS <- here("output", "2.sobject_characterization", "propeller", "data", "proportions_stat_table.csv")
+
+
+# Outputs
+OUTPUT_DIR <- here("output", "5.figure_preparation", "Figure_Supp_1")
+
+dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
+```
+
+# Supplementary Figure 1
+
+### Loading the dataset
+
+This first part is loading the neck dataset, adds the short cell labels, and adds color palettes used in the below figures.
+
+``` {r}
+s.object <- readRDS(SEURAT_INPUT)
+```
+
+This below portion gets the cell type proportions by sample.
+
+```{r}
+propeller_list <- getTransformedProps(
+  clusters = s.object$cell_type,
+  sample = s.object$sample
+)
+
+props_meta <- as_tibble(propeller_list$Proportions) %>%
+  dplyr::left_join(
+    s.object@meta.data %>%
+      select(sample, neck_region) %>%
+      distinct(),
+    by = "sample"
+  ) %>%
+  mutate(
+    n_pct = n * 100,
+    neck_region = factor(neck_region, levels = c("Superficial", "Deep"))
+  )
+```
+
+## Dot Plot for Adipocytes (White vs Brown)
+
+This figure is a dot plot comparing the expression of some thermogenic markers (PPARGC1A, PRDM16, EBF2, and UCP1) and some general adipocyte marekers (ADIPOQ, FABP4, PLIN1, PLIN4, CIDEA, CIDEC) in white and brown adipocytes.
+
+``` {r fig.height = 1.75, fig.width = 5}
+adipocyte.genes <- c("PPARGC1A", "PRDM16", "EBF2", "UCP1", "ADIPOQ", "FABP4", "PLIN1", "PLIN4")
+
+s.object$cell_type_supp_1 <- ifelse(s.object$cell_type %in% c("White Adipocytes", "Brown Adipocytes"),
+  s.object$cell_type,
+  "Non_adipocytes"
+)
+Idents(s.object) <- "cell_type_supp_1"
+
+a <- DotPlot(s.object,
+  features = adipocyte.genes
+) +
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  guides(
+    size = guide_legend(
+      ncol = 1,
+      # byrow = TRUE,
+      override.aes = list(size = seq(from = 1, to = 2, length.out = 4))
+    )
+  )
+```
+
+
+``` {r fig.width = 3.149606, fig.height = 1.377953}
+mm_to_in(c(80, 35))
+a <- a + 
+  # plot_annotation(tag_levels = list("A")) + 
+  theme(plot.tag = element_text(size = 6, face = "plain")) + labs(title = "Adipocyte Markers Expression") + theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 3)) + coord_cartesian(clip = "off")
+a
+
+ggsave(file.path(OUTPUT_DIR, "S1A_dotplot_adipo_markers.pdf"), plot = a, width = 80, height = 35, units = "mm", bg = "white",  dpi = 600)
+```
+
+## Dot Plot for Parathyroid Cells
+
+This figure is a dot plot comparing the expression of some parathyroid markers (CASR, CHGA, PTH) in parathyroid associated cells. This is added since our dataset is the first (to our knowledge) to have cells from the parathyroid.
+
+``` {r fig.height = 1.75, fig.width = 5}
+pth.genes <- c("CASR", "CHGA", "PTH")
+
+Idents(s.object) <- "cell_type_short"
+
+b <- DotPlot(s.object,
+  features = pth.genes
+) +
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  coord_flip() +
+  NoLegend()
+
+b
+```
+
+## Frequency of Brown Adipocyte Nuclei
+
+This section is intended to compare the number of samples that have a high number of brown adipocytes in this dataset compared to the number of samples that have high UCP1 expression in bulk transcriptomic datasets.
+
+This first part pulls and graphs just the percentage of brown adipocyte nuclei in each sample.
+
+```{r}
+ba_freq <- props_meta %>%
+  dplyr::filter(clusters == "Brown Adipocytes") %>%
+  dplyr::filter(neck_region == "Deep") %>%
+  arrange(desc(n_pct)) %>%
+  dplyr::select(sample, n_pct) %>%
+  mutate(
+    Normalized = n_pct / max(n_pct),
+    dataset = "SingleCell"
+  ) %>%
+  rename(
+    Value = n_pct,
+    Sample = sample
+  )
+
+ba_freq$highlow <- seq(1, by = 1, to = nrow(ba_freq))
+
+ba_freq <- ba_freq %>%
+  mutate(normalized_sample = highlow / max(highlow))
+```
+
+### Pulling data from the Gavrila dataset
+
+This second part pulls and graphs the number of high UCP1 samples in the Gavrila dataset.
+
+```{r}
+gavrila <- read.csv(file = GAVRILA_TPM)
+
+normalized_gavrila <- gavrila %>%
+  filter(Gene.name == "UCP1") %>%
+  gather(2:28, key = "Sample", value = "Value") %>%
+  mutate(
+    TissueType = str_extract(Sample, "^(Deep|SC)"),
+    Individual = as.factor(str_extract(Sample, "\\d+$")),
+    Normalized = Value / max(Value),
+    dataset = "Gavrila"
+  ) %>%
+  filter(TissueType == "Deep") %>%
+  arrange(desc(Value)) %>%
+  select(-ID, -Gene.name, -Individual, -TissueType)
+
+normalized_gavrila$highlow <- seq(1, by = 1, to = nrow(normalized_gavrila))
+
+normalized_gavrila <- normalized_gavrila %>%
+  mutate(normalized_sample = highlow / max(highlow))
+```
+
+### Pulling data from the Din dataset
+
+This third part pulls and graphs the number of high UCP1 samples in the Din dataset.
+
+```{r}
+din <- read.delim(DIN_CTS)
+
+normalized_din <- din %>%
+  filter(row.names(.) == "UCP1") %>%
+  gather(key = "Sample", value = "Value") %>%
+  mutate(
+    TissueType = str_extract(Sample, "BAT|WAT"),
+    Normalized = Value / max(Value),
+    dataset = "Din"
+  ) %>%
+  filter(TissueType == "BAT") %>%
+  arrange(desc(Value)) %>%
+  select(-TissueType)
+
+normalized_din$highlow <- seq(1, by = 1, to = nrow(normalized_din))
+
+normalized_din <- normalized_din %>%
+  mutate(normalized_sample = highlow / max(highlow))
+```
+
+### Pulling data from the Xue dataset
+
+This fourth part pulls and graphs the number of high UCP1 samples in the Xue dataset.
+
+``` {r}
+normalized_xue <- read.xlsx(XUE_CTS, sheet = 2, check.names = F) %>%
+  rename_with(~ gsub("\\.", " ", .)) %>%
+  dplyr::filter(`Gene Symbol` == "UCP1") %>%
+  select(2:21) %>%
+  gather(1:20, key = "Sample", value = "Value") %>%
+  mutate(
+    TissueType = str_extract(Sample, "SQ|CS"),
+    Value = (Value)^2,
+    Normalized = Value / max(Value),
+    dataset = "Xue"
+  ) %>%
+  dplyr::filter(TissueType == "CS") %>%
+  arrange(desc(Value)) %>%
+  select(-TissueType)
+
+normalized_xue$highlow <- seq(1, by = 1, to = nrow(normalized_xue))
+
+normalized_xue <- normalized_xue %>%
+  mutate(normalized_sample = highlow / max(highlow))
+```
+
+### Final Plot Product
+
+This final part pulls all of the above datasets into a single plot for comparing between datasets the comparable number of high and low thermogenic cells.
+
+
+```{r, fig.height = 4, fig.width = 5}
+total <- rbind(ba_freq, normalized_gavrila, normalized_din, normalized_xue) %>%
+  mutate(dataset = factor(dataset, levels = c("SingleCell", "Gavrila", "Din", "Xue"))) %>%
+  mutate(dataset_renamed = fct_recode(
+    dataset,
+    "This study (snRNAseq)" = "SingleCell",
+    "This study (microarray)" = "Xue",
+    "Salej et al. 2025 (bulk RNA-seq)" = "Gavrila",
+    "Din et al. 2018 (bulk RNA-seq)" = "Din"
+  ))
+
+levels(total$dataset)
+levels(total$dataset_renamed)
+
+c <- ggplot(total, aes(x = normalized_sample * 100, y = Normalized, color = dataset_renamed)) +
+  geom_hline(yintercept = c(0.2, 0.8), linetype = "dashed", linewidth = 0.3) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Population Percentage",
+    y = "Normalized UCP1 Expression \n or BAT Population",
+    color = "Dataset"
+  ) +
+  theme_nature_metabolism() +
+  coord_cartesian(clip = "off") +
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.95, 0.98), # top-right
+    legend.justification = c(0.5, 1), # anchor legend's top-right corner
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.box.background = element_rect(fill = "white", color = NA),
+    plot.margin = margin(5.5, 35, 5.5, 5.5) # extra right margin so long text isn't cut
+  ) +
+  guides(
+    color = guide_legend(
+      override.aes = list(size = 0.5)  # legend dot size
+    ))
+```
+
+```{r}
+total |> count(dataset_renamed)
+total |> count(dataset_renamed, Normalized > 0.8, Normalized > 0.5,Normalized > 0.20)
+```
+# --- Plotting ---
+``` {r fig.width = 1.968504, fig.height = 1.377953}
+total |> count(dataset_renamed, Normalized > 0.8,Normalized > 0.20) |> group_by(`Normalized > 0.8`, `Normalized > 0.2`) |> summarise(sum(n))
+nrow(total)
+
+mm_to_in(c(50, 35))
+c <- c + 
+  # plot_annotation(tag_levels = list("B")) + 
+  theme(plot.tag = element_text(size = 6, face = "plain")) + labs(title = "Distribution of Thermogenic Samples\nin Cervical AT Datasets") + theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 3)) + 
+  theme(
+  legend.key.width  = unit(0, "pt"),
+) 
+c
+
+ggsave(file.path(OUTPUT_DIR, "S1B_thermogenic_sample_distribution.pdf"), plot = c, width = 50, height = 35, units = "mm", bg = "white",  dpi = 600)
+
+
+
+```
+
+## Proportions of BAd by donor
+
+This plot is a stacked barplot with the relative contribution of each sample to the total of brown adipocytes in the dataset. This is intended to show that most of these cells are from 2 samples and to show which samples are adding the key contributions.
+
+```{r fig.height = 4, fig.width = 2.5}
+bad_counts <- s.object@meta.data %>%
+  dplyr::filter(cell_type_short == "BAds") %>%
+  group_by(Age, Gender) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  arrange(desc(count)) %>%
+  mutate(
+    relative = round(100 * count / sum(count), 0),
+    subject_char = paste(Age, ", ", Gender, sep = ""),
+    subject_char = factor(subject_char, levels = subject_char)
+  )
+
+
+d <- ggplot(bad_counts, aes(x = "BAds", y = relative, fill = subject_char)) +
+  geom_col() +
+  theme_pubr() +
+  scale_fill_brewer(palette = "Set3", name = "Subjects") +
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(),
+    axis.title.x = element_blank(),
+    legend.position = "right"
+  ) +
+  labs(
+    y = "Contribution to Total (%)"
+  )
+```
+
+# --- Plotting ---
+``` {r fig.width = 1.181102, fig.height = 1.377953}
+mm_to_in(c(30, 35))
+d <- d + 
+  # plot_annotation(tag_levels = list("C")) + 
+  theme(plot.tag = element_text(size = 6, face = "plain")) + labs(title = "BAd Cluster") + theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 2))
+d
+
+ggsave(file.path(OUTPUT_DIR, "S1C_brown_adipocyte_subject_composition.pdf"), plot = d, width = 30, height = 35, units = "mm", bg = "white",  dpi = 600)
+```
+
+
+
+## Reference Mapping ASPCs - Subclustering
+
+This section is intended to show the subclustering of adipocyte stem/progenitor cells (ASPCs) based on reference mapping with the Emont dataset. It is broken up in three parts: (1) the distribution of subtypes from the Emont dataset on the new embedding generated by SCANVI, (2) the cells from neck adipose imposed on this embedding, and (3) the proportions of each subtype in the neck adipose samples.
+
+``` {r}
+aspc <- readRDS(REF_MAP_APSC)
+```
+
+``` {r}
+aspc@meta.data <- aspc@meta.data %>%
+  mutate(predictions_scanvi = case_when(
+    batch == "Query" ~ predictions_scanvi,
+    batch == "Reference" ~ "Reference",
+    TRUE ~ NA_character_
+  ))
+
+palette <- c(
+  "Reference" = "grey",
+  "hASPC1" = "#8DD3C7",
+  "hASPC2" = "#FFFFB3",
+  "hASPC3" = "#B3DE69",
+  "hASPC4" = "#FB8072",
+  "hASPC5" = "#80B1D3",
+  "hASPC6" = "#FDB462"
+)
+
+Idents(aspc) <- "batch"
+
+e <- DimPlot(subset(aspc, idents = "Reference"),
+  group.by = "cell_type",
+  order = c(
+    "hASPC1", "hASPC2", "hASPC3",
+    "hASPC4", "hASPC5", "hASPC6"
+  ),
+  cols = palette
+) +
+  theme_nature_metabolism() +
+  theme_no_axis() +
+  NoLegend()
+
+f <- DimPlot(aspc,
+  group.by = "predictions_scanvi",
+  order = c(
+    "hASPC1", "hASPC2", "hASPC3",
+    "hASPC4", "hASPC5", "hASPC6",
+    "Reference"
+  ),
+  cols = palette
+) +
+  theme_nature_metabolism() +
+  theme_no_axis() +
+  guides(
+    color = guide_legend(
+      ncol = 1,
+      # byrow = TRUE,
+      override.aes = list(size = 1)
+    )
+  )
+```
+
+```{r}
+aspc_n <- aspc@meta.data |> count(predictions_scanvi, batch, cell_type)
+aspc_n
+```
+
+
+#### --- Plotting ---
+``` {r fig.width = 1.574803, fig.height = 1.377953}
+mm_to_in(c(40, 35))
+
+# Collect legend for saving
+legend <- get_legend(
+  f + theme(legend.position = "right")
+)
+ggsave(file.path(OUTPUT_DIR, "S1D_E_legend.pdf"), plot = legend, width = 20, height = 35, units = "mm", bg = "white",  dpi = 600)
+
+
+
+e <- e + 
+  # plot_annotation(tag_levels = list("D")) +
+  theme(plot.tag = element_text(size = 6, face = "plain")) +
+  labs(title = "Emont et al. 2022 - ASPC", subtitle = "Recalculated UMAP") +
+  theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 2))
+
+e
+ggsave(file.path(OUTPUT_DIR, "S1D_aspc_reference.pdf"), plot = e, width = 40, height = 35, units = "mm", bg = "white",  dpi = 600)
+
+f
+f_nolegend <- f + theme(legend.position = "none")
+f_nolegend <- f_nolegend +
+  # plot_annotation(tag_levels = list("E")) +
+  theme(plot.tag = element_text(size = 6, face = "plain")) +
+  labs(title = "This Study - ASPC", subtitle = "Recalculated UMAP") +
+  theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 2))
+
+f_nolegend
+
+ggsave(file.path(OUTPUT_DIR, "S1E_aspc_mapped.pdf"), plot = f_nolegend, width = 40, height = 35, units = "mm", bg = "white",  dpi = 600)
+```
+### Abundance of mapped apsc 
+``` {r}
+Idents(aspc) <- "batch"
+query.aspc <- subset(aspc, idents = "Query")
+
+propeller_list <- getTransformedProps(
+  clusters = query.aspc$predictions_scanvi,
+  sample = query.aspc$sample
+)
+
+props_meta <- as_tibble(propeller_list$Proportions) %>%
+  dplyr::left_join(
+    s.object@meta.data %>%
+      select(sample, neck_region) %>%
+      distinct(),
+    by = "sample"
+  ) %>%
+  dplyr::filter(neck_region %in% c("Superficial", "Deep")) %>%
+  mutate(
+    n_pct = n * 100,
+    neck_region = factor(neck_region, levels = c("Superficial", "Deep"))
+  )
+```
+
+``` {r}
+query.aspc@meta.data <- query.aspc@meta.data %>%
+  mutate(
+    neck_region = case_when(
+      sample %in% c("Axiom001_SP", "Creek003_SP", "ENTRY005_SP") ~ "Intermediate",
+      sample %in% c(
+        "Axiom001_PV", "Creek003_PV", "Dsubject3_BAT", "ENTRY005_PV", "FREYA006_PV",
+        "HAPPY008_CS", "ICING009_DC", "KARMA011_DC", "LEAFY012_DC", "MAPLE013_CS",
+        "QUAIL017_PV", "RUGBY018_PV", "TRUTH020_BAT"
+      ) ~ "Deep",
+      sample %in% c(
+        "Axiom001_SQ", "Creek003_SQ", "Dsubject3_WAT", "ENTRY005_SQ", "FREYA006_SQ",
+        "HAPPY008_SC", "ICING009_SC", "JOYES010_PS", "KARMA011_SC", "LEAFY012_PS",
+        "MAPLE013_SC", "Nevis014_PP", "QUAIL017_SC", "RUGBY018_PP"
+      ) ~ "Superficial",
+      TRUE ~ NA_character_
+    )
+  )
+
+Idents(query.aspc) <- "neck_region"
+query.aspc <- subset(query.aspc, idents = c("Deep", "Superficial"))
+
+prop_results <- propeller(
+  clusters = query.aspc$predictions_scanvi,
+  sample = query.aspc$sample,
+  group = query.aspc$neck_region
+) %>%
+  rename(
+    predictions_scanvi = BaselineProp.clusters,
+    p.val = P.Value
+  ) %>%
+  mutate(
+    p_display = case_when(
+      p.val < 0.01 ~ "<0.01",
+      TRUE ~ paste(round(p.val, 2))
+    )
+  ) %>%
+  arrange(rownames(.))
+
+prop_results$group1 <- "Superficial"
+prop_results$group2 <- "Deep"
+prop_results$y.position <- 100
+prop_results$colors <- ifelse(prop_results$p.val < 0.05, "red", "black")
+
+prop_results <- prop_results %>% mutate(
+  predictions_scanvi = factor(predictions_scanvi),
+  xmin = as.numeric(predictions_scanvi) - 0.25,
+  xmax = as.numeric(predictions_scanvi) + 0.25
+)
+```
+
+``` {r}
+p_value_y_position <- max(prop_results$y.position)
+
+g <- ggplot(
+  props_meta %>%
+    dplyr::filter(neck_region != "Intermediate"),
+  aes(
+    x = clusters,
+    y = n_pct,
+    fill = neck_region
+  )
+) +
+
+  # Add the boxplot layer
+  geom_boxplot(
+    outlier.shape = NA,
+    position = position_dodge(width = 0.75),
+    size = 0.3,
+    alpha = 0.75
+  ) +
+
+  # Add the jitter layer with dodging
+  geom_jitter(
+    color = "black",
+    shape = 21,
+    alpha = 0.9,
+    size = 1,
+    position = position_jitterdodge(
+      jitter.width = 0.1,
+      dodge.width = 0.75
+    )
+  ) +
+  scale_fill_manual(values = neck.color, name = "Neck Region") +
+  scale_color_manual(values = neck.color, name = "Neck Region") +
+  new_scale_color() +
+  stat_pvalue_manual(
+    data = prop_results,
+    color = "colors",
+    xmin = "xmin",
+    xmax = "xmax",
+    tip.length = 0.01,
+    label = "p_display",
+    y.position = "y.position",
+    remove.bracket = FALSE,
+    inherit.aes = FALSE,
+    size = 5 / ggplot2::.pt
+  ) +
+  scale_color_identity(guide = "none") +
+  coord_cartesian(ylim = c(NA, p_value_y_position + 2)) + #
+  # Add your other layers and themes
+  ggpubr::grids(axis = "y") +
+  # scale_x_discrete(limits = order) +
+  theme_nature_metabolism() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    legend.position = "right"
+  ) +
+  ylab("Proportion of \n Cells in Sample")
+```
+```{r}
+  props_meta %>%
+    dplyr::filter(neck_region != "Intermediate") |> 
+  distinct(sample, .keep_all = TRUE) |> 
+  count(neck_region)
+```
+
+#### --- Plotting ---
+``` {r fig.width = 3.149606, fig.height = 1.377953}
+mm_to_in(c(80, 35))
+g <- g + 
+  # plot_annotation(tag_levels = list("F")) +
+  theme(plot.tag = element_text(size = 6, face = "plain")) +
+  labs(title = "ASPC Subtype Abundance per Cervical Region") +
+  theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 2)) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.10)))
+g
+ggsave(file.path(OUTPUT_DIR, "S1F_aspc_abundance.pdf"), plot = g, width = 80, height = 35, units = "mm", bg = "white",  dpi = 600)
+```
+
+## Reference Mapping Adipocytes - Subclustering
+
+This section is intended to show the subclustering of adipocytes based on reference mapping with the Emont dataset. It is broken up in three parts: (1) the distribution of subtypes from the Emont dataset on the new embedding generated by SCANVI, (2) the cells from neck adipose imposed on this embedding, and (3) the proportions of each subtype in the neck adipose samples.
+
+``` {r}
+adipo <- readRDS(REF_MAP_ADIPO)
+
+adipo@meta.data <- adipo@meta.data %>%
+  mutate(predictions_scanvi = case_when(
+    batch == "Query" ~ predictions_scanvi,
+    batch == "Reference" ~ "Reference",
+    TRUE ~ NA_character_
+  ))
+
+palette <- c(
+  "Reference" = "grey",
+  "hAd1" = "#8DD3C7",
+  "hAd2" = "#FFFFB3",
+  "hAd3" = "#B3DE69",
+  "hAd4" = "#FB8072",
+  "hAd5" = "#80B1D3",
+  "hAd6" = "#FDB462",
+  "hAd7" = "#FCCDE5"
+)
+
+Idents(adipo) <- "batch"
+
+h <- DimPlot(subset(adipo, idents = "Reference"),
+  group.by = "cell_type",
+  order = c(
+    "hAd1", "hAd2", "hAd3",
+    "hAd4", "hAd5", "hAd6", "hAd7"
+  ),
+  cols = palette
+) +
+  theme_nature_metabolism() +
+  theme_no_axis() +
+  NoLegend()
+
+i <- DimPlot(adipo,
+  group.by = "predictions_scanvi",
+  order = c(
+    "hAd1", "hAd2", "hAd3",
+    "hAd4", "hAd5", "hAd6", "hAd7",
+    "Reference"
+  ),
+  cols = palette
+) +
+  theme_nature_metabolism() +
+  theme_no_axis() +
+  guides(
+    color = guide_legend(
+      ncol = 1,
+      # byrow = TRUE,
+      override.aes = list(size = 1)
+    )
+  )
+```
+
+```{r}
+adipo_n <- adipo@meta.data |> count(predictions_scanvi, batch, cell_type)
+adipo_n
+```
+
+#### --- Plotting ---
+``` {r fig.width = 1.574803, fig.height = 1.377953}
+mm_to_in(c(40, 35))
+
+# Collect legend for saving
+legend <- get_legend(
+  i + theme(legend.position = "right")
+)
+ggsave(file.path(OUTPUT_DIR, "S1G_H_legend.pdf"), plot = legend, width = 20, height = 35, units = "mm", bg = "white",  dpi = 600)
+
+
+
+h <- h + 
+  # plot_annotation(tag_levels = list("G")) + 
+  theme(plot.tag = element_text(size = 6, face = "plain")) + labs(title = "Emont et al. 2022 - Adipocytes", subtitle = "Recalculated UMAP") + theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 2))
+h
+ggsave(file.path(OUTPUT_DIR, "S1G_adipocyte_reference.pdf"), plot = h, width = 40, height = 35, units = "mm", bg = "white",  dpi = 600)
+
+i
+i_nolegend <- i + theme(legend.position = "none")
+i_nolegend <- i_nolegend + 
+  # plot_annotation(tag_levels = list("H")) + 
+  theme(plot.tag = element_text(size = 6, face = "plain")) + labs(title = "This Study - Adipocytes", subtitle = "Recalculated UMAP") + theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 2))
+i_nolegend
+
+ggsave(file.path(OUTPUT_DIR, "S1H_adipocyte_mapped.pdf"), plot = i_nolegend, width = 40, height = 35, units = "mm", bg = "white",  dpi = 600)
+```
+
+
+### Abudance of mapped adipocytes
+``` {r}
+Idents(adipo) <- "batch"
+query.adipo <- subset(adipo, idents = "Query")
+
+propeller_list <- getTransformedProps(
+  clusters = query.adipo$predictions_scanvi,
+  sample = query.adipo$sample
+)
+
+props_meta <- as_tibble(propeller_list$Proportions) %>%
+  dplyr::left_join(
+    s.object@meta.data %>%
+      select(sample, neck_region) %>%
+      distinct(),
+    by = "sample"
+  ) %>%
+  dplyr::filter(neck_region %in% c("Superficial", "Deep")) %>%
+  mutate(
+    n_pct = n * 100,
+    neck_region = factor(neck_region, levels = c("Superficial", "Deep"))
+  )
+```
+
+``` {r}
+query.adipo@meta.data <- query.adipo@meta.data %>%
+  mutate(
+    neck_region = case_when(
+      sample %in% c("Axiom001_SP", "Creek003_SP", "ENTRY005_SP") ~ "Intermediate",
+      sample %in% c(
+        "Axiom001_PV", "Creek003_PV", "Dsubject3_BAT", "ENTRY005_PV", "FREYA006_PV",
+        "HAPPY008_CS", "ICING009_DC", "KARMA011_DC", "LEAFY012_DC", "MAPLE013_CS",
+        "QUAIL017_PV", "RUGBY018_PV", "TRUTH020_BAT"
+      ) ~ "Deep",
+      sample %in% c(
+        "Axiom001_SQ", "Creek003_SQ", "Dsubject3_WAT", "ENTRY005_SQ", "FREYA006_SQ",
+        "HAPPY008_SC", "ICING009_SC", "JOYES010_PS", "KARMA011_SC", "LEAFY012_PS",
+        "MAPLE013_SC", "Nevis014_PP", "QUAIL017_SC", "RUGBY018_PP"
+      ) ~ "Superficial",
+      TRUE ~ NA_character_
+    )
+  )
+
+Idents(query.adipo) <- "neck_region"
+query.adipo <- subset(query.adipo, idents = c("Deep", "Superficial"))
+
+prop_results <- propeller(
+  clusters = query.adipo$predictions_scanvi,
+  sample = query.adipo$sample,
+  group = query.adipo$neck_region
+) %>%
+  rename(
+    predictions_scanvi = BaselineProp.clusters,
+    p.val = P.Value
+  ) %>%
+  mutate(
+    p_display = case_when(
+      p.val < 0.01 ~ "<0.01",
+      TRUE ~ paste(round(p.val, 2))
+    )
+  ) %>%
+  arrange(rownames(.))
+
+prop_results$group1 <- "Superficial"
+prop_results$group2 <- "Deep"
+prop_results$y.position <- 80
+prop_results$colors <- ifelse(prop_results$p.val < 0.05, "red", "black")
+
+prop_results <- prop_results %>% mutate(
+  predictions_scanvi = factor(predictions_scanvi),
+  xmin = as.numeric(predictions_scanvi) - 0.25,
+  xmax = as.numeric(predictions_scanvi) + 0.25
+)
+```
+
+``` {r}
+p_value_y_position <- max(prop_results$y.position)
+
+j <- ggplot(
+  props_meta %>%
+    dplyr::filter(neck_region != "Intermediate"),
+  aes(
+    x = clusters,
+    y = n_pct,
+    fill = neck_region
+  )
+) +
+
+  # Add the boxplot layer
+  geom_boxplot(
+    outlier.shape = NA,
+    position = position_dodge(width = 0.75),
+    size = 0.3,
+    alpha = 0.75
+  ) +
+
+  # Add the jitter layer with dodging
+  geom_jitter(
+    color = "black",
+    shape = 21,
+    alpha = 0.9,
+    size = 1,
+    position = position_jitterdodge(
+      jitter.width = 0.1,
+      dodge.width = 0.75
+    )
+  ) +
+  scale_fill_manual(values = neck.color, name = "Neck Region") +
+  scale_color_manual(values = neck.color, name = "Neck Region") +
+  new_scale_color() +
+  stat_pvalue_manual(
+    data = prop_results,
+    color = "colors",
+    xmin = "xmin",
+    xmax = "xmax",
+    tip.length = 0.01,
+    label = "p_display",
+    y.position = "y.position",
+    remove.bracket = FALSE,
+    inherit.aes = FALSE,
+    size = 5 / ggplot2::.pt
+  ) +
+  scale_color_identity(guide = "none") +
+  coord_cartesian(ylim = c(NA, p_value_y_position + 2)) + #
+  # Add your other layers and themes
+  ggpubr::grids(axis = "y") +
+  # scale_x_discrete(limits = order) +
+  theme_nature_metabolism() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    legend.position = "right"
+  ) +
+  ylab("Proportion of \n Cells in Sample")
+```
+
+# --- Plotting ---
+``` {r fig.width = 3.149606, fig.height = 1.377953}
+mm_to_in(c(80, 35))
+j <- j + 
+  # plot_annotation(tag_levels = list("I")) +
+  theme(plot.tag = element_text(size = 6, face = "plain")) +
+  labs(title = "Adipocyte Subtype Abundance per Cervical Region") +
+  theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, vjust = 2)) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.10)))
+j
+ggsave(file.path(OUTPUT_DIR, "S1I_adipo_abundance.pdf"), plot = j, width = 80, height = 35, units = "mm", bg = "white",  dpi = 600)
+```
+
+```{r}
+  props_meta %>%
+    dplyr::filter(neck_region != "Intermediate") |> 
+  distinct(sample, .keep_all = TRUE) |> 
+  count(neck_region)
+```
+
+
+#### Panel S1b - Comparison of Cell Type Abundance
+
+```{r}
+propeller_proportions <- read_csv(PROPELLER_PROPORTIONS)
+propeller_stats <- read_csv(PROPELLER_STATS)
+```
+### --- Calculate cellular proportions
+```{r}
+propeller_list <- getTransformedProps(
+  clusters = s.object$cell_type_short,
+  sample = s.object$sample
+)
+
+propeller_proportions <- as_tibble(propeller_list$Proportions) %>%
+  dplyr::left_join(
+    s.object@meta.data %>%
+      select(sample, neck_region) %>%
+      distinct(),
+    by = "sample"
+  ) %>%
+  mutate(
+    n_pct = n * 100,
+    neck_region = factor(neck_region, levels = c("Superficial", "Intermediate", "Deep"))
+  ) |> 
+  left_join(s.object@meta.data |> select(cell_type, cell_type_short) |> distinct(cell_type_short,.keep_all = TRUE), by = c("clusters"= "cell_type_short"))
+```
+
+
+```{r fig.height = 4, fig.width = 10}
+bad_plot_data <- propeller_proportions %>%
+    dplyr::filter(clusters == "BAds")
+bad_plot_stats <- propeller_stats |> filter(cell_type_short == "BAds") |> mutate(xmin = 1, xmax = 3, y.position = 18)
+
+
+p_value_y_position <- max(bad_plot_stats$y.position)
+
+# order <- bad_plot_data %>%
+#   group_by(clusters) %>%
+#   dplyr::summarise(avg_pct = mean(n_pct)) %>%
+#   arrange(desc(avg_pct)) %>%
+#   pull(clusters)
+
+gg_propeller<- ggplot(
+  bad_plot_data,
+  aes(
+    x = neck_region,
+    y = n_pct,
+    fill = neck_region
+  )
+) +
+
+  # Add the boxplot layer
+  geom_boxplot(
+    outlier.shape = NA,
+    position = position_dodge(width = 0.75),
+    alpha = 0.75
+  ) +
+
+  # Add the jitter layer with dodging
+  geom_jitter(
+    color = "black",
+    shape = 21,
+    alpha = 0.9,
+    size = 1,
+    position = position_jitterdodge(
+      jitter.width = 0.1,
+      dodge.width = 0.75
+    )
+  ) +
+  scale_fill_manual(values = neck.color, name = "Neck Region") +
+  scale_color_manual(values = neck.color, name = "Neck Region") +
+  new_scale_color() +
+  stat_pvalue_manual(
+    data = bad_plot_stats |> filter(cell_type_short == "BAds"),
+    # color = if_else(p.val < 0.05, "red", "black"),
+    color = "colors",
+    # aes(color = if_else(p.val < 0.05, "red", "black")),
+    xmin = "xmin",
+    xmax = "xmax",
+    # x = "cell_type_short",
+    label = "p_display",
+    y.position = "y.position",
+    tip.length = 0.006,
+    inherit.aes = FALSE,
+    size = 6 / .pt,
+  ) +
+  scale_color_identity(guide = "none") +
+  coord_cartesian(ylim = c(NA, p_value_y_position + 2)) + #
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      vjust = 1,
+      hjust = 1
+    ),
+    axis.title.x = element_blank(),
+    legend.position = c(0.95, 0.60),
+    legend.justification = c("right", "top"),
+  ) +
+  ylab("Proportion of Cells in Sample")
+
+gg_propeller
+```
+# -- Plotting ---
+```{r, fig.width = 0.7874016, fig.height = 1.3779528}
+mm_to_in(c(20,35))
+gg_propeller<- gg_propeller+ 
+  # plot_annotation(tag_levels = list("E")) + 
+  theme(plot.tag = element_text(size = 6, face = "plain")) + labs(title = str_wrap("BAds Abundance", width = 5)) + 
+  theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5),
+        legend.position = "none") +
+  guides(color = guide_legend(ncol = 1),
+         fill = guide_legend(ncol = 1)) +
+  labs(y = str_wrap("Proportion in Sample", width = 15)) +
+  scale_y_continuous(expand = expansion(c(0.05,0.15)))
+gg_propeller
+
+# Save
+ggsave(file.path(OUTPUT_DIR, "Figure_1_F.png"), plot = gg_propeller, width = 20, height = 35, units = "mm", bg = "white", device = "png", dpi = 600)
+
+
+pdf(file.path(OUTPUT_DIR, "Figure_1_F.pdf"), width = mm_to_in(20), mm_to_in(35))
+gg_propeller
+dev.off()
+```

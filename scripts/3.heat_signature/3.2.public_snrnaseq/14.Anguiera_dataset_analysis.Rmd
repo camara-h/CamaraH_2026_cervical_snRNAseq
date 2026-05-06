@@ -1,0 +1,578 @@
+---
+title: "Analysis of genes of interest [Literature based]"
+author: "Henrique Camara"
+date: '2023-11-20'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Load required libraries for data analysis and visualization
+library(Seurat)         # For single-cell RNA-seq data analysis
+library(tidyverse)      # For data manipulation and visualization
+library(ggplot2)        # For creating plots
+library(ggpubr)         # For easy publication-ready plots
+library(pheatmap)       # For creating heatmaps
+library(readxl)         # For reading Excel files
+library(DGEobj.utils)   # Utility functions for differential gene expression
+
+# Function to create directories if they do not exist
+mkdir <- function(out_path) {
+  if (dir.exists(out_path)) {
+    print("Directory already exists.")  # Inform the user if the directory is already present
+  } else {
+    dir.create(out_path, recursive = TRUE)  # Create the directory including any necessary parent directories
+    if (dir.exists(out_path)) {
+      print("Directory created successfully.")  # Inform the user if the directory was created successfully
+    } else {
+      print("Failed to create the directory.")  # Inform the user if directory creation failed
+    }
+  }
+}
+
+
+#setting up a default output directory for your files==========================
+# Load the rstudioapi package
+library(rstudioapi)
+# Get the script name
+script_name <- basename(rstudioapi::getSourceEditorContext()$path)
+# Remove the file extension (e.g., ".R")
+script_name_no_ext <- tools::file_path_sans_ext(script_name)
+# Set the output directory
+output_dir <- file.path("../output", script_name_no_ext)
+# Print the output directory
+print(output_dir)
+# Create the output directory if it doesn't exist
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+saving_path = output_dir
+
+
+sig_dir <- "U:/USERS/CamaraH/Projects/HCA_adipose/Scripts/Vision_signatures/"
+
+
+custom_theme <-  
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    plot.title = element_text(size = 16, face = "bold",hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+
+theme_set(custom_theme)
+```
+
+# INTRODUCTION
+
+Analyze hPVAT dataset from Anguiera
+
+## Workflow {.tabset}
+
+Downloading the object
+
+```{r}
+# Load the Seurat object from an RDS file
+s.object <- readRDS("../Data/Published Datasets/Anguiera 2021/GSE166355_hPVAT.Integrated_annotated_merged_adipo_subset.RDS")
+
+# Print the names of assays available in the Seurat object
+print(names(s.object@assays))
+
+
+# Set the default assay to "RNA" for the Seurat object
+DefaultAssay(s.object) <- "RNA"
+# Idents(s.object)
+# s.object = UpdateSeuratObject(s.object)
+# UMAPPlot(s.object)
+# str(s.object)
+
+s.object <- NormalizeData(object = s.object)
+s.object <- FindVariableFeatures(object = s.object)
+s.object <- ScaleData(object = s.object)
+```
+
+
+```{r}
+##This was done to update the object, but can be skipped from now on
+
+
+# cell_bc = Idents(s.object)
+# all(names(cell_bc) == rownames(s.object@meta.data))
+# s.object$cell_type = cell_bc
+# 
+# str(s.object@meta.data)
+# 
+# UMAPPlot(s.object, group.by = "orig.ident")
+# UMAPPlot(s.object, group.by = "cell_type")
+# UMAPPlot(s.object)
+```
+
+#Quick Plots
+```{r}
+names(s.object@meta.data)
+# Define cell level for grouping
+cell_level <- "cell_type_adipo_subset"  # Choose the level of cell type grouping for analysis. Choose between cell_type_group and cell_type_res.1.6
+
+
+
+# Define Genes of Interest (GOI) for analysis
+GOI <- read.csv("C:/Users/camarah/Desktop/HCA_Rproject/output/14.Anguiera_dataset_analysis/2024-09-12_Adrenergic_receptors_Adipocyte_subtypes_ADRA2B/genes_used.csv")
+GOI = GOI %>% pull(1)
+GOI = c("UCP1", "ADIPOQ")
+
+# Check and print if each gene of interest (GOI) is present in the row names of the Seurat object
+for (pattern in GOI) {
+  print(grep(pattern = pattern, x = rownames(s.object), value = TRUE, ignore.case = TRUE))
+}
+
+# Define features to be used in analysis
+features <- c(
+  unique(GOI[GOI %in% rownames(s.object)]),
+  "UCP1",
+  "ADIPOQ"
+)
+features = features[!grepl("^UGT", features)]
+features = sort(unique(features))
+prefix = "Adrenergic_receptors" #That's a short description of what your gene list is or represent. For easier lookup later
+```
+```{r}
+# Plotting setup ==========================
+formatted_time <- format(Sys.time(), "%Y-%m-%d")  # Create a timestamp for the output directory
+out_dir <- paste0(output_dir, "/", formatted_time, "_", prefix,"_", features[1], "/")  # Define output directory
+
+# Determine if stacking is required based on the number of features
+stack <- length(features) >= 2
+
+# Plot violin plots ==========================
+# Violin plot with default color palette
+p1 <- VlnPlot(
+  s.object,
+  features = features,
+  stack = stack,    # Stack plots if more than one feature
+  flip = stack,     # Flip the violin plots if stacking
+  group.by = cell_level,  # Group by cell level
+  fill.by = "ident",      # Fill colors based on cell identity
+  cols = palette.use        # Use the predefined color palette
+) + NoLegend()             # Remove legend for cleaner output
+
+# Save the first violin plot
+ggsave(
+  create.dir = TRUE, 
+  filename = paste0(out_dir, prefix,"_", features[1], "_VlnPlot.png"),  # Output filename
+  plot = p1, 
+  device = "png", 
+  height = 12, 
+  width = 12, 
+  dpi = 300
+)
+
+p1
+
+# Violin plot with default color palette - Just adipocytes
+Idents(s.object) <- cell_level
+adipo.id <- grep("adipo", unique(Idents(s.object)), ignore.case = T, value = TRUE)  # Identify adipocyte categories
+p3 <- VlnPlot(
+  s.object,
+  features = features,
+  stack = stack,    # Stack plots if more than one feature
+  flip = stack,     # Flip the violin plots if stacking
+  group.by = cell_level,  # Group by cell level
+  fill.by = "ident",      # Fill colors based on cell identity
+  cols = palette.use,        # Use the predefined color palette
+  idents = adipo.id        # Filter for adipocytes
+) + NoLegend()             # Remove legend for cleaner output
+
+# Save the second violin plot
+ggsave(
+  create.dir = TRUE,
+  filename = paste0(out_dir, "_", prefix,"_", features[1], "_VlnPlot_just_adipocytes.png"),  # Output filename
+  plot = p3,
+  device = "png",
+  height = 12,
+  width = 5,
+  dpi = 300
+)
+
+p3
+
+# Violin plot split by neck region
+p2 <- VlnPlot(
+  s.object,
+  features = features,
+  stack = stack,    # Stack plots if more than one feature
+  flip = stack,     # Flip the violin plots if stacking
+  group.by = cell_level,  # Group by cell level
+  fill.by = "ident"      # Fill colors based on cell identity
+)
+
+# Save the third violin plot
+ggsave(
+  create.dir = TRUE,
+  filename = paste0(out_dir, "_", prefix,"_", features[1], "_VlnPlot_per_Depot.png"),  # Output filename
+  plot = p2,
+  device = "png",
+  height = 12,
+  width = 12,
+  dpi = 300
+)
+
+p2
+
+# Violin plot split by neck region - Just the adipocytes
+p4 <- VlnPlot(
+  s.object,
+  features = features,
+  stack = stack,    # Stack plots if more than one feature
+  flip = stack,     # Flip the violin plots if stacking
+  group.by = cell_level,  # Group by cell level
+  fill.by = "ident",      # Fill colors based on cell identity
+  idents = adipo.id        # Filter for adipocytes
+)
+
+# Save the fourth violin plot
+ggsave(
+  create.dir = TRUE,
+  filename = paste0(out_dir, "_", prefix,"_", features[1], "_VlnPlot_per_Depot_just_adipocytes.png"),  # Output filename
+  plot = p4,
+  device = "png",
+  height = 12,
+  width = 6,
+  dpi = 300
+)
+
+p4
+
+# Dot plot ==========================
+p3 <- DotPlot(
+  s.object,
+  features = features,
+  group.by = cell_level  # Group by cell level
+) + 
+  scale_color_viridis_c() +  # Use Viridis color scale for better visibility
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+# Save the dot plot
+ggsave(
+  create.dir = TRUE,
+  filename = paste0(out_dir, "_", prefix,"_", features[1], "_DotPlot.png"),  # Output filename
+  plot = p3,
+  device = "png",
+  height = 10,
+  width = max(7, min(5 + length(features), 25)),  # Adjust width based on number of features
+  dpi = 300
+)
+
+p3
+
+# Dot plot - Just the adipocytes
+p3 <- DotPlot(
+  s.object,
+  features = features,
+  group.by = cell_level,  # Group by cell level
+  idents = adipo.id       # Filter for adipocytes
+) +
+  scale_color_viridis_c() +  # Use Viridis color scale for better visibility
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+# Save the dot plot for adipocytes
+ggsave(
+  create.dir = TRUE,
+  filename = paste0(out_dir, "_", prefix,"_", features[1], "_DotPlot_just_adipocytes.png"),  # Output filename
+  plot = p3,
+  device = "png",
+  height = 10,
+  width = max(7, min(3 + length(features), 25)),  # Adjust width based on number of features
+  dpi = 300
+)
+
+p3
+
+# UMAP Plot ==========================
+UMAPPlot(
+  s.object,
+  group.by = cell_level,  # Group by cell level
+  label = TRUE,           # Add labels
+  repel = TRUE,          # Repel labels to avoid overlap
+  cols = palette.use        # Use the predefined color palette
+) + NoLegend()             # Remove legend for cleaner output
+
+# Create feature plots ==========================
+i <- 1
+factor <- 4
+while (i <= length(features)) {
+  f <- min(i + factor - 1, length(features))  # Define end index for current batch of features
+  feat <- features[i:f]
+  
+  # Print feature plots in batches of 4
+  print(
+    FeaturePlot(
+      s.object,
+      features = feat,
+      order = TRUE, cols = c("#FFF5F0", "#CB181D")  # Use a gradient color scale
+    )
+  )
+  
+    print(
+    FeaturePlot(
+      s.object,
+      features = feat,
+      order = FALSE, cols = c("#FFF5F0", "#CB181D")  # Use a gradient color scale
+    )
+  )
+  
+  i <- i + factor  # Update starting index for the next batch
+}
+
+genes_used = data.frame(features)
+names(genes_used) = prefix
+write.csv(genes_used, file = file.path(out_dir,"genes_used.csv"), row.names = F)
+```
+
+
+```{r}
+# Creating a summary report =====================
+# Get the current timestamp and define output directory
+formatted_time <- format(Sys.time(), "%Y-%m-%d")
+out_dir <- paste0(output_dir, "/", formatted_time, "_", prefix,"_", features[1], "/")
+
+# Create the output directory if it doesn't exist
+dir.create(out_dir, recursive = TRUE)
+
+# Open a PDF device to save the plots
+pdf(paste0(out_dir, "_", prefix,"_", features[1],"_genes_expression_summary.pdf"))
+
+# Plot violin plots ==========================
+# Violin plot with default color palette
+p1 <- VlnPlot(
+  s.object,
+  features = features,
+  stack = stack,    # Stack plots if more than one feature
+  flip = stack,     # Flip the violin plots if stacking
+  group.by = cell_level,  # Group by cell level
+  fill.by = "ident",      # Fill colors based on cell identity
+  cols = palette.use        # Use the predefined color palette
+) + NoLegend()             # Remove legend for cleaner output
+
+print(p1)
+# Violin plot with default color palette - Just adipocytes
+Idents(s.object) <- cell_level
+adipo.id <- grep("adipo", unique(Idents(s.object)), ignore.case = T, value = TRUE)  # Identify adipocyte categories
+p3 <- VlnPlot(
+  s.object,
+  features = features,
+  stack = stack,    # Stack plots if more than one feature
+  flip = stack,     # Flip the violin plots if stacking
+  group.by = cell_level,  # Group by cell level
+  fill.by = "ident",      # Fill colors based on cell identity
+  cols = palette.use,        # Use the predefined color palette
+  idents = adipo.id        # Filter for adipocytes
+) + NoLegend()             # Remove legend for cleaner output
+print(p3)
+
+# Violin plot split by neck region
+p2 <- VlnPlot(
+  s.object,
+  features = features,
+  stack = stack,    # Stack plots if more than one feature
+  flip = stack,     # Flip the violin plots if stacking
+  group.by = cell_level,  # Group by cell level
+  fill.by = "ident"      # Fill colors based on cell identity
+)
+print(p2)
+
+# Violin plot split by neck region - Just the adipocytes
+p4 <- VlnPlot(
+  s.object,
+  features = features,
+  stack = stack,    # Stack plots if more than one feature
+  flip = stack,     # Flip the violin plots if stacking
+  group.by = cell_level,  # Group by cell level
+  fill.by = "ident",      # Fill colors based on cell identity
+  idents = adipo.id        # Filter for adipocytes
+)
+print(p4)
+
+# Dot plot ==========================
+p3 <- DotPlot(
+  s.object,
+  features = features,
+  group.by = cell_level  # Group by cell level
+) + 
+  scale_color_viridis_c() +  # Use Viridis color scale for better visibility
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+print(p3)
+
+# Dot plot - Just the adipocytes
+p3 <- DotPlot(
+  s.object,
+  features = features,
+  group.by = cell_level,  # Group by cell level
+  idents = adipo.id       # Filter for adipocytes
+) +
+  scale_color_viridis_c() +  # Use Viridis color scale for better visibility
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+print(p3)
+
+# UMAP Plot ==========================
+UMAPPlot(
+  s.object,
+  group.by = cell_level,  # Group by cell level
+  label = TRUE,           # Add labels
+  repel = TRUE,          # Repel labels to avoid overlap
+  cols = palette.use        # Use the predefined color palette
+) + NoLegend()             # Remove legend for cleaner output
+
+# Create feature plots ==========================
+i <- 1
+factor <- 4
+while (i <= length(features)) {
+  f <- min(i + factor - 1, length(features))  # Define end index for current batch of features
+  feat <- features[i:f]
+  
+  # Print feature plots in batches of 4
+  print(
+    FeaturePlot(
+      s.object,
+      features = feat,
+      order = TRUE, cols = c("#FFF5F0", "#CB181D")  # Use a gradient color scale
+    )
+  )
+  
+      print(
+    FeaturePlot(
+      s.object,
+      features = feat,
+      order = FALSE, cols = c("#FFF5F0", "#CB181D")  # Use a gradient color scale
+    )
+  )
+      
+  i <- i + factor  # Update starting index for the next batch
+}
+
+# Close the PDF device
+dev.off()
+```
+#Subsetting and reclustering
+```{r}
+Idents(s.object) = "cell_type"
+adipo.s.object = subset(s.object, idents = "Adipocytes")
+
+adipo.s.object <- NormalizeData(object = adipo.s.object)
+adipo.s.object <- FindVariableFeatures(object = adipo.s.object)
+adipo.s.object <- ScaleData(object = adipo.s.object)
+adipo.s.object <- RunPCA(object = adipo.s.object)
+adipo.s.object <- FindNeighbors(object = adipo.s.object, dims = 1:30)
+adipo.s.object <- FindClusters(object = adipo.s.object)
+adipo.s.object <- RunUMAP(object = adipo.s.object, dims = 1:30)
+DimPlot(object = adipo.s.object, reduction = "umap")
+```
+
+```{r}
+names(adipo.s.object@meta.data)
+UMAPPlot(adipo.s.object, group.by = "orig.ident")
+
+ggsave(
+  create.dir = TRUE,
+  filename = file.path(output_dir, "UMAPPlot_adipocyte_subtypes_by_sample.png"),  # Output filename
+  device = "png",
+  height = 3.5,
+  width = 3.5,  # Adjust width based on number of features
+  dpi = 300
+)
+
+UMAPPlot(s.object, split.by = "orig.ident")
+```
+
+```{r}
+data= DotPlot(adipo.s.object, features = features)
+data$data %>% filter(features.plot == "UCP1") %>% arrange(desc(pct.exp))
+
+
+#Determining the palette
+palette.col = unique(palette.use)[1:length(unique(s.object$cell_type_adipo_subset))]
+names(palette.col) = unique(s.object$cell_type_adipo_subset)
+
+Idents(adipo.s.object) = "cell_type_adipo_subset"
+p = UMAPPlot(adipo.s.object, label = T, cols = palette.col) + NoLegend() + labs(title = "Adipocyte subtypes") + theme(plot.title = element_text(hjust = 0.5))
+ggsave(
+  create.dir = TRUE,
+  filename = file.path(output_dir, "UMAPPlot_adipocyte_subtypes.png"),  # Output filename
+  plot = p,
+  device = "png",
+  height = 3.5,
+  width = 3.5,  # Adjust width based on number of features
+  dpi = 300
+)
+p
+```
+```{r}
+for(feat in features){
+  # Print feature plots in batches of 4
+  p = FeaturePlot(
+      adipo.s.object,
+      features = feat,
+      order = TRUE, cols = c("#FFF5F0", "#CB181D")  # Use a gradient color scale
+    )
+  
+  print(p)
+  
+  ggsave(
+  create.dir = TRUE,
+  filename = file.path(output_dir, "FeaturePlot", paste0(feat, ".png")),  # Output filename
+  plot = p,
+  device = "png",
+  height = 3.5,
+  width = 3.5,  # Adjust width based on number of features
+  dpi = 300
+)
+  
+  }
+```
+
+
+####Plot HEAT signature
+```{r}
+sig_dir <- "U:/USERS/CamaraH/Projects/HCA_adipose/Scripts/Vision_signatures/"
+list.files(sig_dir)
+
+genes = read.delim(file.path(sig_dir, "UCP1_correlated_all.gmt"), sep = "\t", header = F)
+heat_sig = unname(unlist(as.vector(genes[2, 3:54])))
+
+DotPlot(adipo.s.object, features = sort(c(heat_sig, "UCP1"))) + theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 0.5))
+VlnPlot(adipo.s.object, features = sort(c(heat_sig, "UCP1")), flip = T, stack = T, fill.by = "ident")
+```
+```{r}
+#Assigning these new adipocyte cell types to the UMAP
+meta = s.object@meta.data %>% mutate(barcode = rownames(s.object@meta.data))
+```
+
+
+```{r}
+adipo.meta = adipo.s.object@meta.data %>% mutate(barcode = rownames(adipo.s.object@meta.data))
+adipo.meta = adipo.meta %>% select(barcode, RNA_snn_res.0.8)
+
+new_meta = left_join(meta, adipo.meta, by = "barcode") %>% mutate(cell_type_adipo_subset = paste(cell_type, RNA_snn_res.0.8, sep = "_")) %>% mutate(cell_type_adipo_subset = gsub("_NA", "", cell_type_adipo_subset))
+new_meta = column_to_rownames(new_meta, "barcode")
+
+s.object@meta.data = new_meta
+
+Idents(s.object) = "cell_type_adipo_subset"
+Idents(s.object) = factor(Idents(s.object), levels = sort(unique(levels(Idents(s.object)))))
+p = UMAPPlot(s.object, cols = palette.col)
+p
+UMAPPlot(s.object, cols = palette.col, label = T) + NoLegend()
+
+ggsave(
+  create.dir = TRUE,
+  filename = file.path(output_dir, "UMAPPlot_Anguiera_dataset.png"),  # Output filename
+  plot = p,
+  device = "png",
+  height = 4,
+  width = 6,  # Adjust width based on number of features
+  dpi = 300
+)
+```
+```{r}
+write_rds(s.object, "U:/Datasets/Other labs/Anguiera_et_al_2021_hPVAT_snRNAseq/GSE166355_hPVAT.Integrated_annotated_merged_adipo_subset.RDS")
+```
+
+

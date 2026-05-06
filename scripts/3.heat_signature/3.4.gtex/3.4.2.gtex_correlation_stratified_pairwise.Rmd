@@ -1,0 +1,594 @@
+---
+title: "GTEx Correlation Analysis"
+output: html_document
+date: "2025-02-07"
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+# Introduction
+
+This notebook tests associations between GTEx adipose HEAT ssGSEA scores
+and subject metadata.
+
+It assumes the GTEx ssGSEA tables were generated upstream and focuses on
+the downstream metadata association workflow.
+
+## Updated screening strategy
+
+The original version screened pairwise HEAT associations across the full
+combined GTEx adipose dataset. Because subcutaneous and visceral adipose tissue
+can have dramatically different HEAT score distributions, pooled screening can
+mask within-stratum associations.
+
+This updated version performs the initial pairwise screening separately within
+each sex-by-tissue stratum, then identifies variables that are significant in
+**any** stratum. Those variables can then be carried forward into the adjusted
+stratified linear models.
+
+The retained outputs are:
+
+- combined HEAT metadata table
+- filtered metadata table used for association testing
+- pooled association results across all GTEx samples
+- stratified pairwise association results
+- summary table of variables significant in any stratum
+- summary figure of FDR-ranked pairwise associations by stratum
+- stratified adjusted linear models by sex and tissue
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(tidyverse)
+library(openxlsx)
+library(ggplot2)
+library(ggpubr)
+library(broom)
+library(here)
+library(RColorBrewer)
+
+# -------------------------------------------------------------------------
+# Define input and output paths
+# -------------------------------------------------------------------------
+INPUT_GTEX_SUB_SSGSEA <- here(
+  "output", "3.heat_signature", "5.gtex", "data",
+  "gene_tpm_2022-06-06_v10_adipose_subcutaneous_ssGSEA.csv"
+)
+
+INPUT_GTEX_VIS_SSGSEA <- here(
+  "output", "3.heat_signature", "5.gtex", "data",
+  "gene_tpm_2022-06-06_v10_adipose_visceral_omentum_ssGSEA.csv"
+)
+
+INPUT_GTEX_SUBJECT_META <- here(
+  "local_data", "gtex",
+  "GTEx_Analysis_2017-06-05_v8_Annotations_SubjectPhenotypesDS.txt"
+)
+
+INPUT_GTEX_META_DICT <- here(
+  "local_data", "gtex",
+  "GTEx_Analysis_2017-06-05_v8_Annotations_GTEx_Analysis_2017-06-05_v8_Annotations_SubjectPhenotypesDD.xlsx"
+)
+
+OUTPUT_DIR <- here("output", "3.heat_signature", "5.gtex")
+OUT_DATA_DIR <- here(OUTPUT_DIR, "data")
+OUT_FIGURE_DIR <- here(OUTPUT_DIR, "figures")
+
+dir.create(OUT_DATA_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(OUT_FIGURE_DIR, recursive = TRUE, showWarnings = FALSE)
+
+required_inputs <- c(
+  INPUT_GTEX_SUB_SSGSEA,
+  INPUT_GTEX_VIS_SSGSEA,
+  INPUT_GTEX_SUBJECT_META,
+  INPUT_GTEX_META_DICT
+)
+
+missing_inputs <- required_inputs[!file.exists(required_inputs)]
+if (length(missing_inputs) > 0) {
+  stop(
+    "Missing input file(s):\n",
+    paste(missing_inputs, collapse = "\n")
+  )
+}
+
+# -------------------------------------------------------------------------
+# Analysis settings
+# -------------------------------------------------------------------------
+PAIRWISE_FDR_CUTOFF <- 0.05
+MIN_PAIRWISE_N <- 5
+MIN_MODEL_N <- 30
+```
+
+# Load ssGSEA results and GTEx metadata
+
+```{r}
+sc_data <- read_csv(INPUT_GTEX_SUB_SSGSEA, show_col_types = FALSE)
+vis_data <- read_csv(INPUT_GTEX_VIS_SSGSEA, show_col_types = FALSE)
+
+final_data <- bind_rows(sc_data, vis_data) %>%
+  mutate(
+    tissue = case_when(
+      str_detect(tolower(tissue), "sub") ~ "Subcutaneous",
+      str_detect(tolower(tissue), "vis") ~ "Visceral",
+      TRUE ~ tissue
+    )
+  )
+
+gtex_subj_meta <- read_delim(
+  INPUT_GTEX_SUBJECT_META,
+  delim = "\t",
+  show_col_types = FALSE
+) %>%
+  mutate(SUBJID = str_remove(SUBJID, "GTEX-"))
+
+gtex_subj_meta_annot <- read.xlsx(INPUT_GTEX_META_DICT)
+
+heat_meta <- final_data %>%
+  select(HEAT, subject, tissue) %>%
+  left_join(gtex_subj_meta, by = c("subject" = "SUBJID"))
+
+write_csv(heat_meta, file.path(OUT_DATA_DIR, "HEAT_metadata.csv"))
+
+gtex_sample_summary <- heat_meta %>%
+  count(tissue, SEX, name = "n_samples") %>%
+  arrange(tissue, SEX)
+
+write_csv(
+  gtex_sample_summary,
+  file.path(OUT_DATA_DIR, "gtex_sample_summary_by_tissue_sex.csv")
+)
+```
+
+# Helper function for variable-wise association testing
+
+```{r}
+testAssociation <- function(var, data, outcome = "HEAT") {
+  x <- data[[var]]
+  y <- data[[outcome]]
+
+  complete_cases <- !is.na(x) & !is.na(y)
+  df <- data[complete_cases, ]
+  x <- df[[var]]
+  y <- df[[outcome]]
+
+  n_total <- nrow(data)
+  n_used <- nrow(df)
+  n_removed <- n_total - n_used
+
+  n_obs <- df %>%
+    count(!!sym(var)) %>%
+    mutate(label = paste(!!sym(var), "n =", n)) %>%
+    pull(label) %>%
+    paste0(collapse = ";")
+
+  if (n_used < MIN_PAIRWISE_N) {
+    return(tibble(
+      variable = var,
+      method = "unhandled",
+      statistic = NA_real_,
+      p_value = NA_real_,
+      n_removed = n_removed,
+      n_obs = n_obs,
+      direction = NA_real_
+    ))
+  }
+
+  if (is.numeric(x) && length(unique(x)) > 10) {
+    res <- cor.test(y, x)
+    return(tibble(
+      variable = var,
+      method = "pearson",
+      statistic = unname(res$estimate),
+      p_value = res$p.value,
+      n_removed = n_removed,
+      n_obs = "Numeric",
+      direction = unname(res$estimate)
+    ))
+  }
+
+  if (length(unique(x)) == 2) {
+    if (is.factor(x) || is.character(x)) {
+      x <- factor(x)
+      df[[var]] <- x
+    }
+
+    res <- tryCatch(
+      t.test(y ~ x, data = df),
+      error = function(e) NULL
+    )
+
+    if (is.null(res)) {
+      return(tibble(
+        variable = var,
+        method = "t.test (failed)",
+        statistic = NA_real_,
+        p_value = NA_real_,
+        n_removed = n_removed,
+        n_obs = n_obs,
+        direction = NA_real_
+      ))
+    }
+
+    return(tibble(
+      variable = var,
+      method = "t.test",
+      statistic = unname(res$statistic),
+      p_value = res$p.value,
+      n_removed = n_removed,
+      n_obs = n_obs,
+      direction = NA_real_
+    ))
+  }
+
+  if (length(unique(x)) > 2 && length(unique(x)) <= 10) {
+    fit <- tryCatch(
+      lm(y ~ x, data = df),
+      error = function(e) NULL
+    )
+
+    if (is.null(fit)) {
+      return(tibble(
+        variable = var,
+        method = "anova (failed)",
+        statistic = NA_real_,
+        p_value = NA_real_,
+        n_removed = n_removed,
+        n_obs = n_obs,
+        direction = NA_real_
+      ))
+    }
+
+    res <- anova(fit)
+    return(tibble(
+      variable = var,
+      method = "anova",
+      statistic = NA_real_,
+      p_value = res$`Pr(>F)`[1],
+      n_removed = n_removed,
+      n_obs = n_obs,
+      direction = NA_real_
+    ))
+  }
+
+  tibble(
+    variable = var,
+    method = "unhandled",
+    statistic = NA_real_,
+    p_value = NA_real_,
+    n_removed = n_removed,
+    n_obs = n_obs,
+    direction = NA_real_
+  )
+}
+```
+
+# Clean metadata for association testing
+
+```{r}
+multi_category_integer <- gtex_subj_meta_annot %>%
+  filter(TYPE == "integer, encoded value") %>%
+  filter(str_detect(VALUES, "1") | str_detect(X9, "2") | str_detect(X10, "2")) %>%
+  pull(VARNAME)
+
+binary_vars <- gtex_subj_meta_annot %>%
+  filter(TYPE == "integer, encoded value", !VARNAME %in% multi_category_integer) %>%
+  pull(VARNAME)
+
+meta_filtered <- heat_meta %>%
+  mutate(
+    across(
+      all_of(binary_vars),
+      ~ case_when(
+        .x > 90 ~ NA_real_,
+        TRUE ~ as.numeric(.x)
+      )
+    )
+  ) %>%
+  select(where(~ n_distinct(na.omit(.)) >= 2)) %>%
+  mutate(
+    SEX = case_when(
+      SEX == 1 ~ "Male",
+      SEX == 2 ~ "Female",
+      TRUE ~ "Unknown"
+    )
+  )
+
+write_csv(meta_filtered, file.path(OUT_DATA_DIR, "HEAT_metadata_filtered.csv"))
+```
+
+# Pooled associations across all GTEx metadata
+
+This pooled screen is retained for reference, but the main selection step for
+follow-up modeling now comes from the stratified pairwise screen below.
+
+```{r}
+assoc_results_pooled <- map_dfr(
+  setdiff(names(meta_filtered), c("HEAT", "subject")),
+  ~ testAssociation(.x, meta_filtered, outcome = "HEAT")
+) %>%
+  mutate(FDR = p.adjust(p_value, method = "BH"))
+
+write_csv(
+  assoc_results_pooled,
+  file.path(OUT_DATA_DIR, "gtex_heat_correlation_pooled.csv")
+)
+```
+
+# Stratified pairwise HEAT associations by sex and tissue
+
+```{r}
+pairwise_vars <- setdiff(names(meta_filtered), c("HEAT", "subject", "SEX", "tissue"))
+
+group_combinations <- meta_filtered %>%
+  distinct(SEX, tissue) %>%
+  drop_na()
+
+assoc_results_stratified <- map_dfr(seq_len(nrow(group_combinations)), function(i) {
+  sex_val <- group_combinations$SEX[i]
+  tissue_val <- group_combinations$tissue[i]
+
+  sub_data <- meta_filtered %>%
+    filter(SEX == sex_val, tissue == tissue_val)
+
+  map_dfr(pairwise_vars, ~ testAssociation(.x, sub_data, outcome = "HEAT")) %>%
+    mutate(
+      SEX = sex_val,
+      tissue = tissue_val,
+      n_stratum = nrow(sub_data)
+    )
+}) %>%
+  group_by(SEX, tissue) %>%
+  mutate(FDR = p.adjust(p_value, method = "BH")) %>%
+  ungroup()
+
+write_csv(
+  assoc_results_stratified,
+  file.path(OUT_DATA_DIR, "gtex_heat_correlation_stratified.csv")
+)
+
+pairwise_significant_any_stratum <- assoc_results_stratified %>%
+  filter(!is.na(FDR), FDR < PAIRWISE_FDR_CUTOFF) %>%
+  left_join(
+    gtex_subj_meta_annot %>% select(VARDESC, VARNAME),
+    by = c("variable" = "VARNAME")
+  ) %>%
+  mutate(
+    VARDESC = case_when(
+      is.na(VARDESC) ~ variable,
+      TRUE ~ VARDESC
+    )
+  ) %>%
+  arrange(variable, SEX, tissue)
+
+write_csv(
+  pairwise_significant_any_stratum,
+  file.path(OUT_DATA_DIR, "significant_pairwise_any_stratum.csv")
+)
+
+# Also write a multi-sheet Excel workbook
+excel_file <- file.path(OUT_DATA_DIR, "stratified_pariwise_assoc_summary.xlsx")
+
+wb <- createWorkbook()
+
+addWorksheet(wb, "gtex_heat_pooled")
+writeData(wb, "gtex_heat_pooled", assoc_results_pooled)
+
+addWorksheet(wb, "gtex_heat_strat")
+writeData(wb, "gtex_heat_strat", assoc_results_stratified)
+
+addWorksheet(wb, "pairwise_significant")
+writeData(wb, "pairwise_significant", pairwise_significant_any_stratum)
+
+
+
+saveWorkbook(wb, excel_file, overwrite = TRUE)
+```
+
+# Stratified adjusted linear models by sex and tissue
+
+Variables are carried forward if they are significant in **any** pairwise
+screening stratum.
+
+```{r}
+# Select variables related to Medical History to check for independent associations of HEAT-sginature score and metabolic status
+medical_history_vars <- gtex_subj_meta_annot |> filter(DOCFILE =="General Medical History") |> pull(VARNAME)
+
+vars_to_plot <- pairwise_significant_any_stratum %>%
+  distinct(variable) %>%
+  filter(variable %in% medical_history_vars) |> 
+  pull(variable)
+
+stratified_model_res <- list()
+stratified_models_list <- list()
+failed_model_fits <- list()
+
+for (var in vars_to_plot) {
+  for (i in seq_len(nrow(group_combinations))) {
+    sex_val <- group_combinations$SEX[i]
+    tissue_val <- group_combinations$tissue[i]
+
+    sub_data <- meta_filtered %>%
+      filter(SEX == sex_val, tissue == tissue_val)
+
+    n_samples_stratum <- nrow(sub_data)
+
+    model_vars <- c(var, "HEAT", "AGE", "BMI", "TRDNISCH", "COHORT") 
+
+    sub_data <- sub_data %>%
+      drop_na(all_of(model_vars))
+
+    n_samples_model <- nrow(sub_data)
+    n_samples_removed <- n_samples_stratum - n_samples_model
+
+    # Skip if too few samples
+    if (n_samples_model < MIN_MODEL_N) {
+      failed_model_fits[[paste(var, sex_val, tissue_val, sep = "_")]] <- tibble(
+        health_var = var,
+        SEX = sex_val,
+        tissue = tissue_val,
+        n_samples_stratum = n_samples_stratum,
+        n_samples_model = n_samples_model,
+        n_samples_removed = n_samples_removed,
+        failure_stage = "precheck",
+        failure_reason = "Too few samples after filtering"
+      )
+      next
+    }
+
+    # Skip if main variable has fewer than 2 unique values
+    if (length(unique(sub_data[[var]])) < 2) {
+      failed_model_fits[[paste(var, sex_val, tissue_val, sep = "_")]] <- tibble(
+        health_var = var,
+        SEX = sex_val,
+        tissue = tissue_val,
+        n_samples_stratum = n_samples_stratum,
+        n_samples_model = n_samples_model,
+        n_samples_removed = n_samples_removed,
+        failure_stage = "precheck",
+        failure_reason = "Main variable has fewer than 2 unique values"
+      )
+      next
+    }
+
+    # Check covariates for invalid factor-like columns with only one level
+    covariates_to_check <- c("AGE", "BMI", "TRDNISCH", "COHORT")
+    bad_covariates <- covariates_to_check[
+      sapply(covariates_to_check, function(x) length(unique(sub_data[[x]])) < 2)
+    ]
+
+    if (length(bad_covariates) > 0) {
+      failed_model_fits[[paste(var, sex_val, tissue_val, sep = "_")]] <- tibble(
+        health_var = var,
+        SEX = sex_val,
+        tissue = tissue_val,
+        n_samples_stratum = n_samples_stratum,
+        n_samples_model = n_samples_model,
+        n_samples_removed = n_samples_removed,
+        failure_stage = "precheck",
+        failure_reason = paste(
+          "Covariate(s) with fewer than 2 unique values:",
+          paste(bad_covariates, collapse = ", ")
+        )
+      )
+      next
+    }
+    # Variables were selected based on the pariwise correlation with HEAT signature. "TRDNISCH" is ischemic time and also represents many of the variables related to "DTH" variables
+    formula <- as.formula(
+      paste("HEAT ~", var, "+ AGE + BMI + TRDNISCH + COHORT") 
+    )
+
+    model_id <- paste(var, sex_val, tissue_val, sep = "_")
+
+    model <- tryCatch(
+      lm(formula, data = sub_data),
+      error = function(e) e
+    )
+
+    if (inherits(model, "error")) {
+      failed_model_fits[[model_id]] <- tibble(
+        health_var = var,
+        SEX = sex_val,
+        tissue = tissue_val,
+        n_samples_stratum = n_samples_stratum,
+        n_samples_model = n_samples_model,
+        n_samples_removed = n_samples_removed,
+        failure_stage = "lm",
+        failure_reason = conditionMessage(model)
+      )
+      next
+    }
+
+    model_tidy <- tryCatch(
+      tidy(model) %>%
+        mutate(
+          health_var = var,
+          SEX = sex_val,
+          tissue = tissue_val,
+          n_samples_stratum = n_samples_stratum,
+          n_samples_model = n_samples_model,
+          n_samples_removed = n_samples_removed
+        ),
+      error = function(e) e
+    )
+
+    if (inherits(model_tidy, "error")) {
+      failed_model_fits[[model_id]] <- tibble(
+        health_var = var,
+        SEX = sex_val,
+        tissue = tissue_val,
+        n_samples_stratum = n_samples_stratum,
+        n_samples_model = n_samples_model,
+        n_samples_removed = n_samples_removed,
+        failure_stage = "tidy",
+        failure_reason = conditionMessage(model_tidy)
+      )
+      next
+    }
+
+    stratified_model_res[[model_id]] <- model_tidy
+    stratified_models_list[[model_id]] <- model
+  }
+}
+
+
+
+stratified_model_aov <- bind_rows(stratified_model_res, .id = "model_id")
+# Add FDR correction
+stratified_model_aov <- stratified_model_aov %>%
+  mutate(
+    tested_term = term %in% vars_to_plot
+  ) %>%
+  group_by(SEX, tissue) %>%
+  mutate(
+    FDR = case_when(
+      tested_term ~ p.adjust(p.value, method = "BH"),
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  ungroup()
+
+failed_model_fits_df <- bind_rows(failed_model_fits, .id = "model_id")
+
+# -----------------------------
+#  Save files 
+# -----------------------------
+
+write_csv(
+  stratified_model_aov,
+  file = file.path(OUT_DATA_DIR, "stratified_aov_statistics.csv")
+)
+
+write_csv(
+  failed_model_fits_df,
+  file = file.path(OUT_DATA_DIR, "failed_stratified_aov_models.csv")
+)
+
+significant_stratified_aov <- stratified_model_aov %>%
+  filter(FDR < 0.05, term %in% vars_to_plot)
+
+write_csv(
+  significant_stratified_aov,
+  file = file.path(OUT_DATA_DIR, "significant_stratified_aov.csv")
+)
+
+# Also write a multi-sheet Excel workbook
+excel_file <- file.path(OUT_DATA_DIR, "stratified_aov_summary.xlsx")
+
+wb <- createWorkbook()
+
+addWorksheet(wb, "significant_models")
+writeData(wb, "significant_models", significant_stratified_aov)
+
+addWorksheet(wb, "all_models")
+writeData(wb, "all_models", stratified_model_aov)
+
+addWorksheet(wb, "failed_models")
+writeData(wb, "failed_models", failed_model_fits_df)
+
+
+
+saveWorkbook(wb, excel_file, overwrite = TRUE)
+```

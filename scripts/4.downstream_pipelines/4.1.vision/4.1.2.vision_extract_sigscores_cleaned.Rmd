@@ -1,0 +1,165 @@
+---
+title: "Extract VISION Signature Scores"
+output: html_document
+date: "2024-12-02"
+---
+
+# Introduction
+
+This notebook extracts UMAP coordinates, VISION signature scores, and
+Seurat metadata from saved VISION objects, then writes one merged score
+table per dataset.
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(Seurat)
+library(VISION)
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(here)
+
+# -------------------------------------------------------------------------
+# Define inputs and outputs
+# -------------------------------------------------------------------------
+
+# Directory containing saved VISION objects
+INPUT_VISION_DIR <- here("output", "4.downstream_pipelines", "vision", "data", "vision_objects")
+
+# Candidate directories containing matching Seurat objects
+INPUT_SEURAT_DIRS <- c(
+here("output", "4.downstream_pipelines", "vision", "data", "cleaned_datasets_human"),
+here("output", "4.downstream_pipelines", "vision", "data", "cleaned_datasets_mouse")
+
+)
+
+# Output directory for extracted signature score tables
+OUTPUT_DIR <- here("output", "4.downstream_pipelines", "vision", "data", "vision_signature_scores")
+dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
+
+# Skip datasets if an output already exists
+skip_existing <- TRUE
+```
+
+# Helper functions
+
+```{r}
+extract_dataset_name <- function(vis_file) {
+  full_dataset_name <- sub("_VISION.rds$", "", basename(vis_file))
+  dataset_name <- sub("^(\\d{4}_\\d{2}_\\d{2}_)?", "", full_dataset_name)
+  dataset_name <- stringr::str_remove(dataset_name, "_Dataset")
+
+  list(
+    full_dataset_name = full_dataset_name,
+    dataset_name = dataset_name
+  )
+}
+
+find_matching_seurat_file <- function(dataset_name, search_dirs) {
+  all_files <- unlist(
+    lapply(search_dirs, function(x) list.files(x, full.names = TRUE)),
+    use.names = FALSE
+  )
+
+  grep(
+    pattern = paste0(dataset_name, ".*\\.rds$"),
+    x = all_files,
+    value = TRUE
+  )
+}
+```
+
+# Identify VISION objects
+
+```{r}
+vision_files <- list.files(
+  path = INPUT_VISION_DIR,
+  full.names = TRUE,
+  pattern = "_VISION.rds$",
+  recursive = TRUE
+)
+
+list.files(OUTPUT_DIR)
+```
+
+# Extract signature scores and metadata
+
+```{r}
+for (vis_file in vision_files) {
+  dataset_info <- extract_dataset_name(vis_file)
+  full_dataset_name <- dataset_info$full_dataset_name
+  dataset_name <- dataset_info$dataset_name
+
+  message("Processing: ", full_dataset_name)
+
+  output_file_name <- paste0(full_dataset_name, "_VISION_sigScore.csv")
+  output_file <- file.path(OUTPUT_DIR, output_file_name)
+
+  if (skip_existing && file.exists(output_file)) {
+    message("Skipping ", full_dataset_name, ": output file already exists")
+    next
+  }
+
+  if (skip_existing && any(grepl(dataset_name, list.files(OUTPUT_DIR)))) {
+    message("Skipping ", dataset_name, ": similar output file already exists")
+    next
+  }
+
+  seurat_file <- find_matching_seurat_file(dataset_name, INPUT_SEURAT_DIRS)
+
+  if (length(seurat_file) == 0) {
+    warning("No matching Seurat file found for dataset: ", dataset_name)
+    next
+  }
+
+  if (length(seurat_file) > 1) {
+    warning("Multiple matching Seurat files found for dataset: ", dataset_name, ". Using the first match.")
+    seurat_file <- seurat_file[1]
+  }
+
+  # -----------------------------------------------------------------------
+  # Load Seurat metadata
+  # -----------------------------------------------------------------------
+  s.object <- readRDS(seurat_file)
+  meta <- s.object@meta.data %>%
+    rownames_to_column("barcode")
+  rm(s.object)
+
+  # -----------------------------------------------------------------------
+  # Load VISION object and extract UMAP and signature scores
+  # -----------------------------------------------------------------------
+  vis <- readRDS(vis_file)
+
+  umap_df <- as.data.frame(getProjections(vis)[["Seurat_umap"]]) %>%
+    rename_with(tolower) %>%
+    rownames_to_column("barcode")
+
+  signature_df <- as.data.frame(getSignatureScores(vis)) %>%
+    rownames_to_column("barcode")
+
+  graph_data <- umap_df %>%
+    left_join(signature_df, by = "barcode") %>%
+    left_join(meta, by = "barcode")
+
+  # -----------------------------------------------------------------------
+  # Pivot signature scores into long format
+  # -----------------------------------------------------------------------
+  sig_names <- names(signature_df)[-1]
+
+  graph_data <- graph_data %>%
+    pivot_longer(
+      cols = all_of(sig_names),
+      names_to = "Hallmark",
+      values_to = "sigScores"
+    ) %>%
+    mutate(dataset = dataset_name) %>%
+    mutate(across(any_of(c("sample", "cell_type", "subject", "region")), as.character))
+
+  # -----------------------------------------------------------------------
+  # Save extracted scores
+  # -----------------------------------------------------------------------
+  write.csv(graph_data, file = output_file, row.names = FALSE)
+}
+```

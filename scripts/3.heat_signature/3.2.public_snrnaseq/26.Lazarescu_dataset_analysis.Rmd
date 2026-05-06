@@ -1,0 +1,2107 @@
+---
+title: "26.Lazarescu_dataset_analysis"
+output: html_document
+date: "2024-12-04"
+---
+
+```{r setup, include=FALSE}
+pacman::p_load(SingleCellExperiment,
+               metap,
+               tradeSeq,
+               Seurat,
+               tidyverse, 
+               Matrix,
+               scales,
+               cowplot,
+               viridis,
+               VISION,
+               biomaRt)
+```
+
+## Loading Data
+
+This dataset has two files split between the subcutaneous and visceral adipose tissue (sat and vat, respectively). Below, the files are loaded and the UMAPs are plotted.
+
+Note that the features are listed as their ensembl gene IDs rather than their gene symbols (making the dataset a little harder to work with). The gene symbols are available in the meta.features (accessed at sat[["RNA"]]@meta.features$feature_name).
+
+```{r}
+
+vat <- readRDS("/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Lazarescu 2025/Lazarescu2025_visc.rds")
+
+sat <- readRDS("/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Lazarescu 2025/Lazarescu2025_subc.rds")
+
+DimPlot(vat, reduction = "umap", group.by = "main_groups", label = TRUE)
+DimPlot(sat, reduction = "umap", group.by = "main_groups", label = TRUE)
+DimPlot(vat, reduction = "umap", group.by = "seurat_clusters", label = TRUE)
+DimPlot(sat, reduction = "umap", group.by = "seurat_clusters", label = TRUE)
+
+```
+
+### SAT
+
+#### Violin Plot
+
+This next chunk looks at the expression of some of the standard markers that we use for describing populations within our neck adipose tissue dataset. As noted, the features are listed as ensembl gene IDs (and I can't figure out how to change them to gene symbols) so the Violin plots are generated based on those annotations.
+
+```{r}
+
+DefaultAssay(sat) = "RNA"
+
+features = c("ADIPOQ","PPARGC1A", "PDGFRA", "DCN", "MYOCD", "PDE4D",  "ADGRF5", "JAM2", "STEAP4", "PKHD1L1", "CDH19", "MPZ",  "CARD11", "CD163", "CPA3", "CSF3R", "CNTNAP2")
+
+mart <- useEnsembl(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl") 
+
+gene_info_go <- getBM(
+  attributes = c("hgnc_symbol", "ensembl_gene_id"),
+  filters = "hgnc_symbol",
+  values = features,
+  mart = mart
+) 
+
+df_ordered <- gene_info_go[match(features, gene_info_go$hgnc_symbol), ]
+
+VlnPlot(sat, 
+        features = gene_info_go[match(features, gene_info_go$hgnc_symbol), ]$ensembl_gene_id, 
+        stack = TRUE, 
+        flip = TRUE, 
+        group.by = "main_groups") + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm"))
+
+gene_info_go[match(features, gene_info_go$hgnc_symbol), ]
+
+```
+
+#### Prepping VISION
+
+Next, the dataset is prepared according to the VISION workflow. In VISION, we will characterise the HEAT signature in addition to the general adipogenesis signature and the BATLAS signature produced by the Wolfrum laboratory. In this first part, the object is split into multiple parts that will be re-inserted into a vision object in the next step. 
+
+```{r normalise-data, echo=FALSE}
+
+sat@assays[["RNA"]]@counts@Dimnames[[1]] <- sat[["RNA"]]@meta.features$feature_name
+
+# Read in expression counts (Genes X Cells)
+counts <- sat@assays$RNA@counts
+  
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- sat@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = sat@meta.data
+```
+
+This next chunk loads the VISION signatures, loads the data that was split in the previous chunk, then runs the algorithm. The resulting output is default saved as an object (since this process takes 10-20 minutes, this can expedite future analyses.
+
+```{r}
+
+Signatures="../Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+saveRDS(vis, file = "../Output/26.Lazarescu_dataset_analysis/VISION_sat_HEAT.rds")
+# vis <- readRDS(file = "../Output/26.Lazarescu_dataset_analysis/VISION_sat_HEAT.rds")
+
+```
+
+#### VISION Embedding
+
+Here the output scores are pasted onto a table with the UMAP embeddings along with the cluster annotations above. The purpose of this is to be able to plot the signature scores either on the UMAP embeddings or by cell type. In this first chunk, the different signature scores are mapped on the UMAP embeddings.
+
+```{r}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+sampletype <- sat$donor_id
+celltype <- sat$main_groups
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(sampletype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  gather(4:8, key = "Hallmark", value = "sigScores")
+sat.graph.data <- graph.data
+
+ggplot(graph.data) + 
+  aes(x = UMAP_1, y = UMAP_2, color = sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(option = "plasma") +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "UMAP Plots for Different Signatures",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+  ) +
+  facet_wrap(~Hallmark)
+
+ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x = UMAP_1, y = UMAP_2, color = sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(option = "plasma") +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "UMAP Plot of HEAT Signature",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+  )
+
+```
+
+Note in these graphs that the Adipogenesis gene signatures strongly mark the adipocyte cluster with some labelling for BATLAS and Fatty Acid Metabolism. 
+
+In the below chunk, these signature scores (HEAT, BATLAS, and adipogenesis) are further investigated split by cluster.
+
+```{r}
+
+
+ggplot((graph.data %>% dplyr::filter(Hallmark == "HEAT")), aes(x = celltype, y = sigScores, fill = celltype)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of HEAT Signature Scores by Cell Type" # Plot title
+  ) 
+
+ggplot((graph.data %>% dplyr::filter(Hallmark == "BATLAS")), aes(x = celltype, y = sigScores, fill = celltype)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of BATLAS Signature Scores by Cell Type" # Plot title
+  ) 
+
+ggplot((graph.data %>% dplyr::filter(Hallmark == "Adipo")), aes(x = celltype, y = sigScores, fill = celltype)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of Adipo Signature Scores by Cell Type" # Plot title
+  ) 
+
+```
+
+#### VISION vs UMAP Plot
+
+Finally, a figure is created here that has the signatures scores side-by-side with the original clusters.
+
+``` {r fig.height = 6, fig.width = 12}
+
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=UMAP_1, y=UMAP_2, color=sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(option = "plasma",
+                      limits = c(-0.3,2.6)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Lazarescu 2025 SAT",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) 
+
+c <- DimPlot(sat, reduction = "umap", group.by = "main_groups", label = TRUE, repel = TRUE) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Lazarescu 2025 SAT",
+    color = "Signature Scores"
+  ) + 
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) +
+  NoLegend()
+
+c + b
+
+```
+
+
+### VAT
+
+#### Violin Plot
+
+This next chunk looks at the expression of some of the standard markers that we use for describing populations within our neck adipose tissue dataset. As noted, the features are listed as ensembl gene IDs (and I can't figure out how to change them to gene symbols) so the Violin plots are generated based on those annotations.
+
+```{r}
+
+DefaultAssay(vat) = "RNA"
+
+features = c("ADIPOQ","PPARGC1A", "PDGFRA", "DCN", "MYOCD", "PDE4D",  "ADGRF5", "JAM2", "STEAP4", "PKHD1L1", "CDH19", "MPZ",  "CARD11", "CD163", "CPA3", "CSF3R", "CNTNAP2")
+
+mart <- useEnsembl(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl") 
+
+gene_info_go <- getBM(
+  attributes = c("hgnc_symbol", "ensembl_gene_id"),
+  filters = "hgnc_symbol",
+  values = features,
+  mart = mart
+) 
+
+df_ordered <- gene_info_go[match(features, gene_info_go$hgnc_symbol), ]
+
+VlnPlot(vat, 
+        features = gene_info_go[match(features, gene_info_go$hgnc_symbol), ]$ensembl_gene_id, 
+        stack = TRUE, 
+        flip = TRUE, 
+        group.by = "main_groups") + 
+  NoLegend() +
+  theme(plot.margin = unit(c(0.1, 0.1, 0.1, 1.5), "cm"))
+
+gene_info_go[match(features, gene_info_go$hgnc_symbol), ]
+
+```
+
+#### Prepping VISION
+
+Next, the dataset is prepared according to the VISION workflow. In VISION, we will characterise the HEAT signature in addition to the general adipogenesis signature and the BATLAS signature produced by the Wolfrum laboratory. In this first part, the object is split into multiple parts that will be re-inserted into a vision object in the next step.
+
+```{r normalise-data, echo=FALSE}
+
+vat@assays[["RNA"]]@counts@Dimnames[[1]] <- vat[["RNA"]]@meta.features$feature_name
+
+# Read in expression counts (Genes X Cells)
+counts <- vat@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- vat@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = vat@meta.data
+```
+
+This next chunk loads the VISION signatures, loads the data that was split in the previous chunk, then runs the algorithm. The resulting output is default saved as an object (since this process takes 10-20 minutes, this can expedite future analyses.
+
+```{r}
+
+Signatures="../Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+saveRDS(vis, file = "../Output/26.Lazarescu_dataset_analysis/VISION_vat_HEAT.rds")
+# vis <- readRDS(file = "../Output/26.Lazarescu_dataset_analysis/VISION_vat_HEAT.rds")
+
+```
+
+#### VISION Embedding
+
+Here the output scores are pasted onto a table with the UMAP embeddings along with the cluster annotations above. The purpose of this is to be able to plot the signature scores either on the UMAP embeddings or by cell type. In this first chunk, the different signature scores are mapped on the UMAP embeddings.
+
+```{r}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+sampletype <- vat$donor_id
+celltype <- vat$main_groups
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(sampletype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(celltype) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  gather(4:8, key = "Hallmark", value = "sigScores")
+vat.graph.data <- graph.data
+
+ggplot(graph.data) + 
+  aes(x = UMAP_1, y = UMAP_2, color = sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(option = "plasma") +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "UMAP Plots for Different Signatures",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+  ) +
+  facet_wrap(~Hallmark)
+
+ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x = UMAP_1, y = UMAP_2, color = sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(option = "plasma") +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "UMAP Plot of HEAT Signature",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+  )
+
+```
+
+
+```{r}
+
+
+ggplot((graph.data %>% dplyr::filter(Hallmark == "HEAT")), aes(x = celltype, y = sigScores, fill = celltype)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of HEAT Signature Scores by Cell Type" # Plot title
+  ) 
+
+ggplot((graph.data %>% dplyr::filter(Hallmark == "BATLAS")), aes(x = celltype, y = sigScores, fill = celltype)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of BATLAS Signature Scores by Cell Type" # Plot title
+  ) 
+
+ggplot((graph.data %>% dplyr::filter(Hallmark == "Adipo")), aes(x = celltype, y = sigScores, fill = celltype)) +
+  geom_jitter(aes(color = celltype), width = 0.2, alpha = 0.6, size = 0.8) + # Add jittered points
+  geom_boxplot(outlier.shape = NA,  color = "black", width = 0.6) + # Boxplot aesthetics
+  scale_fill_brewer(palette = "Set3") +
+  scale_color_brewer(palette = "Set3") + # Optional: Nice color palette for points
+  theme_minimal() + # Clean theme
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold", angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    panel.grid.major.y = element_line(color = "grey90", size = 0.6), # Light horizontal gridlines
+    panel.grid.major.x = element_blank(), # Remove vertical gridlines
+    panel.grid.minor = element_blank(), # Remove minor gridlines
+    panel.border = element_blank(), # Remove border
+    axis.line = element_line(color = "black", size = 1.2), # Add solid x and y axes
+    axis.ticks = element_line(color = "black", size = 1.2) # Add solid axis ticks
+  ) +
+  labs(
+    x = NULL, # "Cell Type", # Label for x-axis
+    y = "Signature Scores", # Label for y-axis
+    title = "Boxplot of Adipo Signature Scores by Cell Type" # Plot title
+  ) 
+
+```
+
+
+#### VISION vs UMAP Plot
+
+Finally, a figure is created here that has the signatures scores side-by-side with the original clusters.
+
+``` {r fig.height = 6, fig.width = 12}
+
+
+b <- ggplot(graph.data %>% 
+         dplyr::filter(Hallmark == "HEAT")) + 
+  aes(x=UMAP_1, y=UMAP_2, color=sigScores) + 
+  geom_point(size = 0.5, alpha = 0.7) +
+  scale_color_viridis(option = "plasma",
+                      limits = c(-0.3,2.6)) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Lazarescu 2025 VAT",
+    color = "Signature Scores"
+  ) +
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) 
+
+c <- DimPlot(vat, reduction = "umap", group.by = "main_groups", label = TRUE, repel = TRUE) +
+  labs(
+    x = "UMAP Dimension 1", 
+    y = "UMAP Dimension 2", 
+    title = "Lazarescu 2025 VAT",
+    color = "Signature Scores"
+  ) + 
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank()
+  ) +
+  NoLegend()
+
+c + b
+
+```
+
+### Combined
+
+The purpose of this section is to create a violin plot that shows the HEAT signature scores of combined VAT and SAT data.
+
+``` {r fig.height = 5, fig.width = 2}
+
+sat.graph.data$depot <- "Subcutaneous"
+vat.graph.data$depot <- "Visceral"
+combined.graph.data <- rbind(sat.graph.data, vat.graph.data) %>% 
+  dplyr::filter(celltype == "Adipocytes") %>% 
+  dplyr::filter(Hallmark == "HEAT")
+
+lazarescu.violin <- ggviolin(data = combined.graph.data,
+              x = "depot",
+              y = "sigScores",
+              fill = "depot",
+              add = c("jitter"),
+              add.params = list(alpha = 0.5,
+                                color = "celltype")) +
+  scale_fill_manual(values = c("#ffe65a","#ffe65a")) +
+  scale_color_manual(values = c("#ffe65a","#ffe65a")) +
+  scale_y_continuous(limits = c(-0.3, 2.5)) +
+  theme(
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none") +
+  labs(
+    y = "Signature Score"
+  )
+
+lazarescu.violin$layers <- c(lazarescu.violin$layers[-1], lazarescu.violin$layers[1])
+
+lazarescu.violin
+
+```
+
+``` {r fig.height = 5, fig.width = 3.5}
+
+vat <- readRDS("/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Lazarescu 2025/Lazarescu2025_visc.rds")
+
+Idents(vat) = "main_groups"
+vat.adipo <- subset(vat, idents = c("Adipocytes"))
+rm(vat)
+
+vat.adipo$HEAT <- NA
+
+vat.adipo$HEAT[which(rownames(vat.adipo@meta.data) %in% (vat.graph.data %>% 
+                                                 dplyr::filter(Hallmark == "HEAT") %>% 
+                                                 dplyr::filter(sigScores > 0.8))$cells)] <- "HEAT Score > 0.8"
+vat.adipo$HEAT[which(rownames(vat.adipo@meta.data) %in% (vat.graph.data %>% 
+                                                 dplyr::filter(Hallmark == "HEAT") %>% 
+                                                 dplyr::filter(sigScores < 0.8))$cells)] <- "HEAT Score < 0.8"
+
+vat.adipo@assays[["RNA"]]@counts@Dimnames[[1]] <- vat.adipo[["RNA"]]@meta.features$feature_name
+
+therm.genes <- c("PPARGC1A", "PRDM16","EBF2", "UCP1")
+
+mart <- useEnsembl(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl") 
+
+gene_info_go <- getBM(
+  attributes = c("hgnc_symbol", "ensembl_gene_id"),
+  filters = "hgnc_symbol",
+  values = therm.genes,
+  mart = mart
+) 
+
+df_ordered <- gene_info_go[match(therm.genes, gene_info_go$hgnc_symbol), ]
+
+gene_map <- c("ENSG00000109819" = "PPARGC1A",
+              "ENSG00000142611" = "PRDM16",
+              "ENSG00000221818" = "EBF2",
+              "ENSG00000109424" = "UCP1")
+
+Idents(vat.adipo) = "HEAT"
+vat.bat <- VlnPlot(vat.adipo,
+            features = names(gene_map),
+        flip = TRUE,
+        stack = TRUE) + 
+  NoLegend() +
+  labs(title = "Lazarescu") +
+  theme(
+    plot.margin = margin(0, 0, 0, 25),
+    axis.title.x = element_blank()
+  ) 
+
+vat.bat
+
+```
+
+### Test Signature Analysis
+
+``` {r}
+
+lazarescu <- schard::h5ad2seurat('/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Lazarescu 2025/Lazarescu_var_reset.h5ad')
+
+library(schard)
+```
+
+``` {r}
+
+Idents(lazarescu) = "main_groups"
+lazarescu.adipo <- subset(lazarescu, idents = c("Adipocytes"))
+
+Idents(lazarescu.adipo) = "sample"
+sa <- subset(lazarescu.adipo, idents = c("subq"))
+va <- subset(lazarescu.adipo, idents = c("visc"))
+
+Idents(sa) = "author_cell_type"
+Idents(va) = "author_cell_type"
+
+sa.markers = FindAllMarkers(sa, only.pas = TRUE, min.pct = 0.1) %>% 
+  filter(avg_log2FC > 1 & 
+           pct.1 > 0.1 &
+           p_val_adj < 0.05) %>% 
+  arrange(desc(avg_log2FC))
+va.markers = FindAllMarkers(va, only.pas = TRUE, min.pct = 0.1) %>% 
+  filter(avg_log2FC > 1 & 
+           pct.1 > 0.1 &
+           p_val_adj < 0.05) %>% 
+  arrange(desc(avg_log2FC))
+
+```
+
+``` {r}
+
+sc2.genes = intersect((va.markers %>% filter(cluster == "VA2"))$gene,
+                      (sa.markers %>% filter(cluster == "SA2"))$gene)
+
+sc3.genes = intersect((va.markers %>% filter(cluster == "VA3"))$gene,
+                      (sa.markers %>% filter(cluster == "SA3"))$gene)
+
+sc4.genes = intersect((va.markers %>% filter(cluster == "VA4"))$gene,
+                      (sa.markers %>% filter(cluster == "SA4"))$gene)
+
+sc5.genes = intersect((va.markers %>% filter(cluster == "VA5"))$gene,
+                      (sa.markers %>% filter(cluster == "SA5"))$gene)
+
+```
+
+Creating the gene signature file for adipocytes
+
+``` {r}
+
+# Function to write a list of gene sets to a GMT file
+write_gene_sets_to_gmt <- function(gene_sets, gmt_file, description = "Custom Gene Set") {
+  # Input validation: check that gene_sets is a list
+  if (!is.list(gene_sets)) {
+    stop("Error: gene_sets must be a list.")
+  }
+
+  # Input validation: Check if gmt_file is a string
+  if(!is.character(gmt_file)) {
+    stop("Error: gmt_file must be a character string (filename).")
+  }
+
+  # Open the file for writing
+  con <- file(gmt_file, "w") # "w" for write mode
+
+  # Iterate through the gene sets and write each one to the file
+  for (i in seq_along(gene_sets)) { # Use seq_along for safe iteration
+
+    # Build the GMT line:  gene set name, description, gene symbols
+    gene_set_name <- names(gene_sets)[i]  # Get gene set name from the list
+    if (is.null(gene_set_name) || gene_set_name == "") {
+      gene_set_name <- paste0("GeneSet_", i) # Default name if no name exists
+    }
+
+    # Escape spaces in gene symbols with underscores
+    escaped_genes <- gsub(" ", "_", gene_sets[[i]])
+
+    gmt_line <- paste(gene_set_name, description, paste(escaped_genes, collapse = "\t"), sep = "\t")
+
+    # Write the line to the file
+    writeLines(gmt_line, con)
+  }
+
+  # Close the connection to the file
+  close(con)
+  message(paste("GMT file written to:", gmt_file))
+}
+
+# Example Usage
+# Create some example gene sets (replace with your actual gene sets)
+gene_sets <- list(
+  "Adipocyte_subtype_2" = sc2.genes,
+  "Adipocyte_subtype_3" = sc3.genes,
+  "Adipocyte_subtype_4" = sc4.genes,
+  "Adipocyte_subtype_5" = sc5.genes
+)
+
+# Specify the output filename
+gmt_filename <- "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/human_adipocyte_subcluster.gmt"
+
+# Write the gene sets to the GMT file
+write_gene_sets_to_gmt(gene_sets, gmt_filename, description = "Adipocyte Subcluster")
+
+```
+
+```{r normalise-data, echo=FALSE}
+
+# Read in expression counts (Genes X Cells)
+counts <- test@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- test@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = test@meta.data[1:2]
+```
+
+The next part is to create the Vision object and to analyse that object.
+
+``` {r}
+
+Signatures="/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/VISION/Gene Signatures/human_adipocyte_subcluster.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+# saveRDS(vis, file = "../Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+# vis <- readRDS(file = "/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Output/18.NeckAdipose_dataset_analysis/VISION_neck_HEAT.rds")
+
+```
+
+
+``` {r}
+
+s.object@meta.data
+
+library("scPred")
+library("Seurat")
+library("magrittr")
+
+```
+
+``` {r}
+
+Idents(s.object) = "cell_type"
+aspc = subset(s.object, idents = "Adipocyte Progenitor Cells")
+
+aspc <- FindClusters(aspc, resolution = 0.2)
+
+aspc@meta.data
+
+clusters = c('RNA_snn_res.0.5', 'RNA_snn_res.0.3', 'RNA_snn_res.0.2', 'RNA_snn_res.0.1', 'cell_type')
+
+for (cluster in clusters) {
+  Idents(aspc) = cluster
+  print(DimPlot(aspc))
+}
+
+```
+
+``` {r}
+
+Idents(s.object) = "cell_type"
+adipo = subset(s.object, idents = "White Adipocytes")
+
+adipo <- FindClusters(adipo, resolution = c(0.1, 0.2, 0.3, 0.5))
+
+adipo@meta.data
+
+clusters = c('RNA_snn_res.0.5', 'RNA_snn_res.0.3', 'RNA_snn_res_0.2', 'RNA_snn_res_0.1', 'cell_type')
+
+for (cluster in clusters) {
+  Idents(adipo) = cluster
+  print(DimPlot(adipo))
+}
+
+features = c("SMOC2", "LSAMP", "BICC1", "ADAMTS3")
+
+for (feature in features) {
+  FeaturePlot(adipo, features = feature)
+}
+
+
+FeaturePlot(adipo, features = "CFH")
+
+```
+
+### Test
+
+
+``` {r}
+
+reference.data = schard::h5ad2seurat('/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Lazarescu 2025/Lazarescu_var_reset.h5ad')
+
+# Test Dataset Inputs
+test.idents = "cell_type"
+cell.type2 = c("Adipocyte Progenitor Cells")
+
+# Reference Dataset Inputs
+idents1 = "main_groups"
+cell.type = c("Adipocytes")
+idents2 = "author_cell_type"
+
+Idents(reference.data) = idents1
+
+data.celltype <- subset(reference.data, idents = cell.type)
+
+Idents(data.celltype) = idents2
+
+markers = FindAllMarkers(data.celltype, only.pas = TRUE, min.pct = 0.1) %>% 
+  filter(avg_log2FC > 1 & 
+           pct.1 > 0.1 &
+           p_val_adj < 0.05) %>% 
+  arrange(desc(avg_log2FC))
+
+temp_gmt_file <- tempfile(fileext = ".gmt")
+
+# Open the temporary GMT file for writing
+gmt_conn <- file(temp_gmt_file, "w")
+
+for (clust in unique(markers$cluster)) {
+ 
+  gene_symbols = markers %>% 
+    filter(cluster == clust) %>% 
+    pull()
+    
+  temp <- paste(clust, "", paste(gene_symbols,collapse = '\t'),sep = '\t')
+  
+  writeLines(temp, gmt_conn)
+  
+}
+
+close(gmt_conn)
+
+Idents(test.data) = test.idents
+subset = subset(test.data, idents = cell.type2)
+
+# Read in expression counts (Genes X Cells)
+counts <- subset@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- subset@reductions$umap@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = subset@meta.data[1:2]
+
+vis <- Vision(scaled_counts, signatures = temp_gmt_file, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+viewResults(vis)
+
+```
+
+``` {r}
+
+# saveRDS(vis, file = "/Users/seankodani/Documents/temp_lazarescu_adipo.RDS")
+# vis <- readRDS("/Users/seankodani/Documents/temp_emont_APC.RDS")
+
+```
+
+### Subdiving clusters
+
+``` {r}
+
+all.genes <- rownames(subset)
+subset <- ScaleData(subset, features = all.genes)
+subset <- RunPCA(subset, features = VariableFeatures(object = subset))
+subset <- FindNeighbors(subset, dims = 1:20)
+subset <- FindClusters(subset, resolution = 0.5)
+subset <- RunUMAP(subset, dims = 1:20)
+
+Idents(subset) = "sample"
+DimPlot(subset, reduction = "umap")
+
+table(subset@meta.data$sample, subset@meta.data$seurat_clusters)
+
+
+```
+
+#### Harmony Test
+
+``` {r}
+
+subset[["RNA"]] <- split(subset[["RNA"]], f = subset$sample)
+
+subset <- NormalizeData(subset)
+subset <- FindVariableFeatures(subset)
+subset <- ScaleData(subset)
+subset <- RunPCA(subset)
+
+subset <- FindNeighbors(subset, dims = 1:30, reduction = "pca")
+subset <- FindClusters(subset, resolution = 2, cluster.name = "unintegrated_clusters")
+subset <- RunUMAP(subset, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+
+# subset <- SCTransform(subset, assay = "RNA", verbose = FALSE)
+subset <- IntegrateLayers(
+  object = subset, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = FALSE
+)
+
+subset <- FindNeighbors(subset, reduction = "harmony", dims = 1:30)
+subset <- FindClusters(subset, resolution = 0.5, cluster.name = "harmony_clusters")
+
+subset <- RunUMAP(subset, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+DimPlot(
+  subset,
+  reduction = "umap.harmony",
+  group.by = c("sample", "harmony_clusters"),
+  combine = FALSE, label.size = 2
+)
+
+FeaturePlot(
+  subset,
+  reduction = "umap.harmony",
+  features = c("nCount_log_10k_norm", "PPARGC1A")
+)
+
+```
+
+
+``` {r}
+
+signatures = names(vis@sigData)
+
+data.frame = subset@reductions[["umap.harmony"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "cells")
+
+for (signature in signatures) {
+  
+  test = getSignatureScores(vis)[, signature] %>% 
+    as.data.frame() %>% 
+    rownames_to_column(var = "cells") 
+  colnames(test) = c("cells", signature)
+  
+  data.frame = left_join(data.frame, 
+                         test, 
+                         by = "cells")
+  
+}
+
+data.frame <- left_join(data.frame,
+                        subset@meta.data %>% 
+                          dplyr::select(harmony_clusters) %>% 
+                          rownames_to_column(var = "cells"),
+                        by = "cells")
+
+data.frame <- gather(data.frame, 4:(length(names(vis@sigData)) + 3), key = "Signatures", value = "Scores")
+
+```
+
+
+``` {r fig.height = 5, fig.width = 5}
+
+ggplot(data.frame,
+       aes(x = harmony_clusters, y = Scores)) +
+  geom_boxplot() +
+  facet_wrap(~Signatures)
+
+for(signature in unique(data.frame$Signatures)) {
+  
+  a <- ggplot(data.frame %>% 
+           filter(Signatures == signature),
+       aes(x = umapharmony_1, y = umapharmony_2, color = Scores)) +
+  geom_point() +
+    ggtitle(signature)
+  
+  print(a)
+  
+}
+
+
+```
+
+#### What happens when we filter for one type of tissue then integrate?
+
+``` {r}
+
+subset = subset(test.data, idents = cell.type2)
+
+Idents(subset) = "neck_region"
+
+subset.deep = subset(subset, idents = "Deep")
+subset.super = subset(subset, idents = "Superficial")
+
+```
+
+``` {r}
+
+seurat_list <- list(
+  deep = subset.deep,
+  super = subset.super
+)
+
+process_seurat_object <- function(dataset) {
+  
+  dataset[["RNA"]] <- split(dataset[["RNA"]], f = dataset$sample)
+  
+  dataset <- NormalizeData(dataset)
+  dataset <- FindVariableFeatures(dataset)
+  dataset <- ScaleData(dataset)
+  dataset <- RunPCA(dataset)
+  
+  dataset <- FindNeighbors(dataset, dims = 1:30, reduction = "pca")
+  dataset <- FindClusters(dataset, resolution = 2, cluster.name = "unintegrated_clusters")
+  dataset <- RunUMAP(dataset, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+  
+  dataset <- IntegrateLayers(
+    object = dataset, method = HarmonyIntegration,
+    orig.reduction = "pca", new.reduction = "harmony",
+    verbose = FALSE
+  )
+  
+  dataset <- FindNeighbors(dataset, reduction = "harmony", dims = 1:30)
+  dataset <- FindClusters(dataset, resolution = 0.5, cluster.name = "harmony_clusters")
+  
+  dataset <- RunUMAP(dataset, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+    
+}
+
+for (name in names(seurat_list)) {
+  current_dataset = seurat_list[[name]]
+  processed_dataset <- process_seurat_object(current_dataset)
+  seurat_list[[name]] <- processed_dataset
+}
+
+```
+
+``` {r}
+
+subset.deep <- seurat_list$deep
+subset.super <- seurat_list$super
+
+```
+
+``` {r}
+
+a <- DimPlot(
+  subset.deep,
+  reduction = "umap.harmony",
+  group.by = c("harmony_clusters"),
+  label.size = 2
+)
+
+b <- DimPlot(
+  subset.superficial,
+  reduction = "umap.harmony",
+  group.by = "harmony_clusters",
+  label.size = 2
+)
+
+a + b
+
+FeaturePlot(
+  dataset,
+  reduction = "umap.harmony",
+  features = c("nCount_log_10k_norm", "PPARGC1A")
+)
+
+```
+
+##### Deep
+
+``` {r}
+
+signatures = names(vis@sigData)
+
+data.frame = subset.deep@reductions[["umap.harmony"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "cells")
+
+for (signature in signatures) {
+  
+  test = getSignatureScores(vis)[, signature] %>% 
+    as.data.frame() %>% 
+    rownames_to_column(var = "cells") 
+  colnames(test) = c("cells", signature)
+  
+  data.frame = left_join(data.frame, 
+                         test, 
+                         by = "cells")
+  
+}
+
+data.frame <- left_join(data.frame,
+                        subset.deep@meta.data %>% 
+                          dplyr::select(harmony_clusters) %>% 
+                          rownames_to_column(var = "cells"),
+                        by = "cells")
+
+data.frame <- gather(data.frame, 4:(length(names(vis@sigData)) + 3), key = "Signatures", value = "Scores")
+
+```
+
+
+``` {r fig.height = 5, fig.width = 5}
+
+ggplot(data.frame,
+       aes(x = harmony_clusters, y = Scores)) +
+  geom_boxplot() +
+  facet_wrap(~Signatures, scale = "free")
+
+for(signature in unique(data.frame$Signatures)) {
+  
+  a <- ggplot(data.frame %>% 
+           filter(Signatures == signature),
+       aes(x = umapharmony_1, y = umapharmony_2, color = Scores)) +
+  geom_point() +
+    ggtitle(signature)
+  
+  print(a)
+  
+}
+
+DimPlot(
+  subset.deep,
+  reduction = "umap.harmony",
+  group.by = c("harmony_clusters"),
+  label.size = 2
+)
+
+FeaturePlot(
+  subset.deep,
+  reduction = "umap.harmony",
+  features = c("EBF2", "PPARGC1A", "MECOM", "PRDM16")
+)
+
+VlnPlot(
+  subset.deep,
+  features = c("EBF2", "PPARGC1A", "MECOM", "PRDM16", "ADIPOQ", "PLIN1", "PLIN4"),
+  pt.size = 0.1,
+  stack = TRUE,
+  flip = TRUE
+)
+
+```
+
+
+##### Superficial
+
+``` {r}
+
+signatures = names(vis@sigData)
+
+data.frame = subset.super@reductions[["umap.harmony"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "cells")
+
+for (signature in signatures) {
+  
+  test = getSignatureScores(vis)[, signature] %>% 
+    as.data.frame() %>% 
+    rownames_to_column(var = "cells") 
+  colnames(test) = c("cells", signature)
+  
+  data.frame = left_join(data.frame, 
+                         test, 
+                         by = "cells")
+  
+}
+
+data.frame <- left_join(data.frame,
+                        subset.super@meta.data %>% 
+                          dplyr::select(harmony_clusters) %>% 
+                          rownames_to_column(var = "cells"),
+                        by = "cells")
+
+data.frame <- gather(data.frame, 4:(length(names(vis@sigData)) + 3), key = "Signatures", value = "Scores")
+
+```
+
+
+``` {r fig.height = 5, fig.width = 5}
+
+ggplot(data.frame,
+       aes(x = harmony_clusters, y = Scores)) +
+  geom_boxplot() +
+  facet_wrap(~Signatures, scale = "free")
+
+for(signature in unique(data.frame$Signatures)) {
+  
+  a <- ggplot(data.frame %>% 
+           filter(Signatures == signature),
+       aes(x = umapharmony_1, y = umapharmony_2, color = Scores)) +
+  geom_point() +
+    ggtitle(signature)
+  
+  print(a)
+  
+}
+
+DimPlot(
+  subset.super,
+  reduction = "umap.harmony",
+  group.by = c("harmony_clusters"),
+  label.size = 2
+)
+
+FeaturePlot(
+  subset.super,
+  reduction = "umap.harmony",
+  features = c("EBF2", "PPARGC1A", "MECOM", "PRDM16")
+)
+
+VlnPlot(
+  subset.super,
+  features = c("EBF2", "PPARGC1A", "MECOM", "PRDM16", "ADIPOQ", "PLIN1", "PLIN4"),
+  pt.size = 0.1,
+  stack = TRUE,
+  flip = TRUE
+)
+
+```
+
+
+#### What happens when we filter for one type of tissue then integrate? Part 2
+
+``` {r}
+
+subset = subset(test.data, idents = cell.type2)
+
+Idents(subset) = "neck_region"
+
+subset.deep = subset(subset, idents = "Deep")
+subset.super = subset(subset, idents = "Superficial")
+
+```
+
+``` {r}
+
+seurat_list <- list(
+  deep = subset.deep,
+  super = subset.super
+)
+
+process_seurat_object <- function(dataset) {
+  
+  dataset[["RNA"]] <- split(dataset[["RNA"]], f = dataset$sample)
+  
+  dataset <- NormalizeData(dataset)
+  dataset <- FindVariableFeatures(dataset)
+  dataset <- ScaleData(dataset)
+  dataset <- RunPCA(dataset)
+  
+  dataset <- FindNeighbors(dataset, dims = 1:30, reduction = "pca")
+  dataset <- FindClusters(dataset, resolution = 2, cluster.name = "unintegrated_clusters")
+  dataset <- RunUMAP(dataset, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+  
+  dataset <- IntegrateLayers(
+    object = dataset, method = HarmonyIntegration,
+    orig.reduction = "pca", new.reduction = "harmony",
+    verbose = FALSE
+  )
+  
+  dataset <- FindNeighbors(dataset, reduction = "harmony", dims = 1:30)
+  dataset <- FindClusters(dataset, resolution = 0.5, cluster.name = "harmony_clusters")
+  
+  dataset <- RunUMAP(dataset, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+    
+}
+
+for (name in names(seurat_list)) {
+  current_dataset = seurat_list[[name]]
+  processed_dataset <- process_seurat_object(current_dataset)
+  seurat_list[[name]] <- processed_dataset
+}
+
+```
+
+``` {r}
+
+subset.deep <- seurat_list$deep
+subset.super <- seurat_list$super
+
+```
+
+``` {r}
+
+a <- DimPlot(
+  subset.deep,
+  reduction = "umap.harmony",
+  group.by = c("harmony_clusters"),
+  label.size = 2
+)
+
+b <- DimPlot(
+  subset.super,
+  reduction = "umap.harmony",
+  group.by = "harmony_clusters",
+  label.size = 2
+)
+
+a + b
+
+```
+
+##### Deep
+
+``` {r}
+
+signatures = names(vis@sigData)
+
+data.frame = subset.deep@reductions[["umap.harmony"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "cells")
+
+for (signature in signatures) {
+  
+  test = getSignatureScores(vis)[, signature] %>% 
+    as.data.frame() %>% 
+    rownames_to_column(var = "cells") 
+  colnames(test) = c("cells", signature)
+  
+  data.frame = left_join(data.frame, 
+                         test, 
+                         by = "cells")
+  
+}
+
+data.frame <- left_join(data.frame,
+                        subset.deep@meta.data %>% 
+                          dplyr::select(harmony_clusters) %>% 
+                          rownames_to_column(var = "cells"),
+                        by = "cells")
+
+data.frame <- gather(data.frame, 4:(length(names(vis@sigData)) + 3), key = "Signatures", value = "Scores")
+
+```
+
+
+``` {r fig.height = 5, fig.width = 5}
+
+ggplot(data.frame,
+       aes(x = harmony_clusters, y = Scores)) +
+  geom_boxplot() +
+  facet_wrap(~Signatures, scale = "free")
+
+for(signature in unique(data.frame$Signatures)) {
+  
+  a <- ggplot(data.frame %>% 
+           filter(Signatures == signature),
+       aes(x = umapharmony_1, y = umapharmony_2, color = Scores)) +
+  geom_point() +
+    ggtitle(signature)
+  
+  print(a)
+  
+}
+
+DimPlot(
+  subset.deep,
+  reduction = "umap.harmony",
+  group.by = c("harmony_clusters"),
+  label.size = 2
+)
+
+FeaturePlot(
+  subset.deep,
+  reduction = "umap.harmony",
+  features = c("EBF2", "PPARGC1A", "MECOM", "PRDM16")
+)
+
+VlnPlot(
+  subset.deep,
+  features = c("EBF2", "PPARGC1A", "MECOM", "PRDM16", "ADIPOQ", "PLIN1", "PLIN4"),
+  pt.size = 0.1,
+  stack = TRUE,
+  flip = TRUE
+)
+
+```
+
+
+##### Superficial
+
+``` {r}
+
+signatures = names(vis@sigData)
+
+data.frame = subset.super@reductions[["umap.harmony"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "cells")
+
+for (signature in signatures) {
+  
+  test = getSignatureScores(vis)[, signature] %>% 
+    as.data.frame() %>% 
+    rownames_to_column(var = "cells") 
+  colnames(test) = c("cells", signature)
+  
+  data.frame = left_join(data.frame, 
+                         test, 
+                         by = "cells")
+  
+}
+
+data.frame <- left_join(data.frame,
+                        subset.super@meta.data %>% 
+                          dplyr::select(harmony_clusters) %>% 
+                          rownames_to_column(var = "cells"),
+                        by = "cells")
+
+data.frame <- gather(data.frame, 4:(length(names(vis@sigData)) + 3), key = "Signatures", value = "Scores")
+
+```
+
+
+``` {r fig.height = 5, fig.width = 5}
+
+ggplot(data.frame,
+       aes(x = harmony_clusters, y = Scores)) +
+  geom_boxplot() +
+  facet_wrap(~Signatures, scale = "free")
+
+for(signature in unique(data.frame$Signatures)) {
+  
+  a <- ggplot(data.frame %>% 
+           filter(Signatures == signature),
+       aes(x = umapharmony_1, y = umapharmony_2, color = Scores)) +
+  geom_point() +
+    ggtitle(signature)
+  
+  print(a)
+  
+}
+
+DimPlot(
+  subset.super,
+  reduction = "umap.harmony",
+  group.by = c("harmony_clusters"),
+  label.size = 2
+)
+
+FeaturePlot(
+  subset.super,
+  reduction = "umap.harmony",
+  features = c("EBF2", "PPARGC1A", "MECOM", "PRDM16")
+)
+
+VlnPlot(
+  subset.super,
+  features = c("EBF2", "PPARGC1A", "MECOM", "PRDM16", "ADIPOQ", "PLIN1", "PLIN4"),
+  pt.size = 0.1,
+  stack = TRUE,
+  flip = TRUE
+)
+
+```
+
+
+
+#### Naive Test
+
+``` {r}
+
+resolutions = c(0.1, 0.2, 0.3, 0.5)
+subset <- FindClusters(subset, resolution = resolutions)
+
+subset@meta.data
+
+clusters = c('RNA_snn_res.0.5', 'RNA_snn_res.0.3', 'RNA_snn_res.0.2', 'RNA_snn_res.0.1')
+
+for (cluster in clusters) {
+  Idents(subset) = cluster
+  print(DimPlot(subset))
+}
+
+```
+
+``` {r}
+
+signatures = names(vis@sigData)
+# 
+# data.frame = getProjections(vis)[["UMAP"]] %>% 
+#     as.data.frame() %>% 
+#     rownames_to_column(var = "cells")
+
+data.frame = subset@reductions[["umap"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "cells")
+
+for (signature in signatures) {
+  
+  test = getSignatureScores(vis)[, signature] %>% 
+    as.data.frame() %>% 
+    rownames_to_column(var = "cells") 
+  colnames(test) = c("cells", signature)
+  
+  data.frame = left_join(data.frame, 
+                         test, 
+                         by = "cells")
+  
+}
+
+data.frame <- left_join(data.frame,
+                        subset@meta.data %>% 
+                          dplyr::select(RNA_snn_res.0.1, RNA_snn_res.0.2, RNA_snn_res.0.3, RNA_snn_res.0.5) %>% 
+                          rownames_to_column(var = "cells"),
+                        by = "cells")
+
+data.frame <- gather(data.frame, 4:(length(names(vis@sigData)) + 3), key = "Signatures", value = "Scores")
+
+```
+
+### Reference Mapping - Emont Adipocytes
+
+``` {r}
+
+emont = readRDS("/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Emont 2022/human_all.rds")
+
+Idents(emont) = "cell_type2"
+ref.aspc <- subset(emont, idents = c("ASPC"))
+
+Idents(emont) = "cell_type2"
+ref.adipo <- subset(emont, idents = c("adipocyte"))
+ref.data <- GetAssayData(ref.adipo)
+
+```
+
+Default code
+
+``` {r}
+
+# Build reference
+reference = symphony::buildReference(
+    ref.data,                   # reference expression (genes by cells)
+    ref.adipo@meta.data,              # reference metadata (cells x attributes)
+    vars = c('sample'),         # variable(s) to integrate over
+    K = 100,                   # number of Harmony soft clusters
+    verbose = TRUE,            # display verbose output
+    do_umap = TRUE,            # run UMAP and save UMAP model to file
+    do_normalize = FALSE,      # perform log(CP10k) normalization on reference expression
+    vargenes_method = 'vst',   # variable gene selection method: 'vst' or 'mvp'
+    vargenes_groups = 'cell_type', # metadata column specifying groups for variable gene selection within each group
+    topn = 2000,               # number of variable genes (per group)
+    theta = 2,                 # Harmony parameter(s) for diversity term
+    d = 20,                    # number of dimensions for PCA
+    additional_genes = NULL,    # vector of any additional genes to force include
+    save_uwot_path = './testing_uwot_model_2'
+)
+
+umap_labels = left_join(rownames_to_column(as.data.frame(ref.adipo$cell_type), var = "cells"),
+                        rownames_to_column(as.data.frame(reference$umap$embedding), var = "cells"),
+                        by = "cells") %>% 
+  left_join(rownames_to_column(as.data.frame(ref.adipo$sample), var = "cells"),
+            by = "cells") %>% 
+  left_join(rownames_to_column(as.data.frame(ref.adipo$source), var = "cells"),
+            by = "cells")
+
+ggplot(umap_labels, aes(x = UMAP1, y = UMAP2, color = ref.adipo$cell_type)) +
+  geom_point()
+
+```
+
+``` {r}
+
+Idents(s.object) = "cell_type"
+adipocytes <- subset(s.object, idents = "White Adipocytes")
+
+query.data <- GetAssayData(adipocytes)
+adipocytes@meta.data
+
+```
+
+``` {r}
+
+# Map query
+query = mapQuery(query.data,             # query gene expression (genes x cells)
+                 adipocytes@meta.data,        # query metadata (cells x attributes)
+                 reference,             # Symphony reference object
+                 # vars = NULL,           # Query batch variables to harmonize over (NULL treats query as one batch)
+                 do_normalize = FALSE,  # perform log(CP10k) normalization on query (set to FALSE if already normalizedl
+                 do_umap = TRUE)        # project query cells into reference UMAP
+
+```
+
+``` {r}
+
+query2 = as.data.frame(adipocytes$cell_type) 
+rename(query2, cells = `adipocytes$cell_type`)
+
+query3 = as.data.frame(query$umap)
+
+umap_labels = left_join(rownames_to_column(rbind(as.data.frame(adipocytes$cell_type) %>% 
+                                         rename(cell_type = `adipocytes$cell_type`), 
+                                      as.data.frame(ref.adipo$cell_type) %>% 
+                                         rename(cell_type = `ref.adipo$cell_type`)),
+                                      var = "cells"),
+                        rownames_to_column(rbind(as.data.frame(reference$umap$embedding), 
+                                                 as.data.frame(query$umap)), 
+                                           var = "cells"),
+                        by = "cells") %>% 
+  mutate(dataset = ifelse(cell_type == "White Adipocytes", "query", "reference"))
+
+ggplot(umap_labels, aes(x = UMAP1, y = UMAP2, color = cell_type)) +
+  geom_point() +
+  facet_wrap(~dataset)
+
+```
+
+``` {r}
+
+query = knnPredict(query, reference, reference$meta_data$cell_type, k = 5)
+
+head(query$meta_data)
+
+umap_query <- left_join(rownames_to_column(query$meta_data[c('cell_type_pred_knn', 'neck_region')], 
+                                           var = "cells"),
+                        rownames_to_column(as.data.frame(query$umap),
+                                           var = "cells"),
+                        by = "cells")
+
+ggplot(umap_query, aes(x = UMAP1, y = UMAP2, color = cell_type_pred_knn)) +
+  geom_point() +
+  facet_wrap(~neck_region)
+
+table(umap_query$cell_type_pred_knn, umap_query$neck_region)
+
+```
+
+### Reference Mapping - Emont ASPC
+
+``` {r}
+
+Idents(ref.aspc) = "compartment"
+ref.aspc.nuc <- subset(ref.aspc, idents = c("nucleus"))
+ref.data <- GetAssayData(ref.aspc.nuc)
+
+```
+
+Default code
+
+``` {r}
+
+# Build reference
+reference = symphony::buildReference(
+    ref.data,                   # reference expression (genes by cells)
+    ref.aspc.nuc@meta.data,              # reference metadata (cells x attributes)
+    vars = c('sample'),         # variable(s) to integrate over
+    K = 100,                   # number of Harmony soft clusters
+    verbose = TRUE,            # display verbose output
+    do_umap = TRUE,            # run UMAP and save UMAP model to file
+    do_normalize = FALSE,      # perform log(CP10k) normalization on reference expression
+    vargenes_method = 'vst',   # variable gene selection method: 'vst' or 'mvp'
+    vargenes_groups = 'cell_type', # metadata column specifying groups for variable gene selection within each group
+    topn = 2000,               # number of variable genes (per group)
+    theta = 2,                 # Harmony parameter(s) for diversity term
+    d = 20,                    # number of dimensions for PCA
+    additional_genes = NULL,    # vector of any additional genes to force include
+    save_uwot_path = './testing_uwot_model_2'
+)
+
+umap_labels = left_join(rownames_to_column(as.data.frame(ref.aspc.nuc$cell_type), var = "cells"),
+                        rownames_to_column(as.data.frame(reference$umap$embedding), var = "cells"),
+                        by = "cells") %>% 
+  left_join(rownames_to_column(ref.aspc.nuc@meta.data, var = "cells"),
+            by = "cells") 
+
+ggplot(umap_labels, aes(x = UMAP1, y = UMAP2, color = cell_type)) +
+  geom_point()
+
+```
+
+``` {r}
+
+Idents(s.object) = "cell_type"
+aspc <- subset(s.object, idents = "Adipocyte Progenitor Cells")
+
+query.data <- GetAssayData(aspc)
+
+```
+
+``` {r}
+
+# Map query
+query = mapQuery(query.data,             # query gene expression (genes x cells)
+                 aspc@meta.data,        # query metadata (cells x attributes)
+                 reference,             # Symphony reference object
+                 # vars = NULL,           # Query batch variables to harmonize over (NULL treats query as one batch)
+                 do_normalize = FALSE,  # perform log(CP10k) normalization on query (set to FALSE if already normalizedl
+                 do_umap = TRUE)        # project query cells into reference UMAP
+
+```
+
+``` {r}
+
+query2 = as.data.frame(aspc$cell_type) 
+rename(query2, cells = `aspc$cell_type`)
+
+query3 = as.data.frame(query$umap)
+
+umap_labels = left_join(rownames_to_column(rbind(as.data.frame(aspc$cell_type) %>% 
+                                         rename(cell_type = `aspc$cell_type`), 
+                                      as.data.frame(ref.aspc.nuc$cell_type) %>% 
+                                         rename(cell_type = `ref.aspc.nuc$cell_type`)),
+                                      var = "cells"),
+                        rownames_to_column(rbind(as.data.frame(reference$umap$embedding), 
+                                                 as.data.frame(query$umap)), 
+                                           var = "cells"),
+                        by = "cells") %>% 
+  mutate(dataset = ifelse(cell_type == "Adipocyte Progenitor Cells", "query", "reference"))
+
+ggplot(umap_labels, aes(x = UMAP1, y = UMAP2, color = cell_type)) +
+  geom_point() +
+  facet_wrap(~dataset)
+
+```
+
+``` {r}
+
+query = knnPredict(query, reference, reference$meta_data$cell_type, k = 5)
+
+head(query$meta_data)
+
+umap_query <- left_join(rownames_to_column(query$meta_data[c('cell_type_pred_knn', 'neck_region')], 
+                                           var = "cells"),
+                        rownames_to_column(as.data.frame(query$umap),
+                                           var = "cells"),
+                        by = "cells")
+
+ggplot(umap_query, aes(x = UMAP1, y = UMAP2, color = cell_type_pred_knn)) +
+  geom_point() +
+  facet_wrap(~neck_region)
+
+table(umap_query$cell_type_pred_knn, umap_query$neck_region)
+
+```
+
+
+
+### Reference Mapping - Laz
+
+``` {r}
+
+lazarescu = schard::h5ad2seurat('/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Lazarescu 2025/Lazarescu_var_reset.h5ad')
+
+Idents(lazarescu) = "main_groups"
+lazarescu.adipo <- subset(lazarescu, idents = c("Adipocytes"))
+Idents(lazarescu.adipo) = "sample"
+lazarescu.adipo.sq = subset(lazarescu.adipo, idents = c("subq"))
+ref.data <- GetAssayData(lazarescu.adipo.sq)
+
+```
+
+Default code
+
+``` {r}
+
+# Build reference
+reference = symphony::buildReference(
+    ref.data,                   # reference expression (genes by cells)
+    lazarescu.adipo.sq@meta.data,              # reference metadata (cells x attributes)
+    vars = c('orig.ident'),         # variable(s) to integrate over
+    K = 100,                   # number of Harmony soft clusters
+    verbose = TRUE,            # display verbose output
+    do_umap = TRUE,            # run UMAP and save UMAP model to file
+    do_normalize = FALSE,      # perform log(CP10k) normalization on reference expression
+    vargenes_method = 'vst',   # variable gene selection method: 'vst' or 'mvp'
+    vargenes_groups = 'author_cell_type', # metadata column specifying groups for variable gene selection within each group
+    topn = 2000,               # number of variable genes (per group)
+    theta = 2,                 # Harmony parameter(s) for diversity term
+    d = 20,                    # number of dimensions for PCA
+    additional_genes = NULL,    # vector of any additional genes to force include
+    save_uwot_path = './testing_uwot_model_2'
+)
+
+umap_labels = left_join(rownames_to_column(as.data.frame(lazarescu.adipo.sq$author_cell_type), var = "cells"),
+                        rownames_to_column(as.data.frame(reference$umap$embedding), var = "cells"),
+                        by = "cells") %>% 
+  left_join(rownames_to_column(as.data.frame(lazarescu.adipo.sq$donor_id), var = "cells"),
+            by = "cells") %>% 
+  left_join(rownames_to_column(as.data.frame(lazarescu.adipo.sq$sample), var = "cells"),
+            by = "cells")
+
+ggplot(umap_labels, aes(x = UMAP1, y = UMAP2, color = lazarescu.adipo.sq$author_cell_type)) +
+  geom_point()
+
+```
+
+``` {r}
+
+umap_labels = left_join(rownames_to_column(as.data.frame(lazarescu.adipo.sq$author_cell_type), var = "cells"),
+                        rownames_to_column(as.data.frame(reference$umap$embedding), var = "cells"),
+                        by = "cells") %>% 
+  left_join(rownames_to_column(as.data.frame(lazarescu.adipo.sq$donor_id), var = "cells"),
+            by = "cells") %>% 
+  left_join(rownames_to_column(as.data.frame(lazarescu.adipo.sq$sample), var = "cells"),
+            by = "cells")
+
+ggplot(umap_labels, aes(x = UMAP1, y = UMAP2, color = lazarescu.adipo.sq$author_cell_type)) +
+  geom_point()
+
+```
+
+``` {r}
+
+Idents(s.object) = "cell_type"
+adipocytes <- subset(s.object, idents = "White Adipocytes")
+
+query.data <- GetAssayData(adipocytes)
+adipocytes@meta.data
+
+```
+
+``` {r}
+
+# Map query
+query = mapQuery(query.data,             # query gene expression (genes x cells)
+                 s.object@meta.data,        # query metadata (cells x attributes)
+                 reference,             # Symphony reference object
+                 # vars = NULL,           # Query batch variables to harmonize over (NULL treats query as one batch)
+                 do_normalize = FALSE,  # perform log(CP10k) normalization on query (set to FALSE if already normalizedl
+                 do_umap = TRUE)        # project query cells into reference UMAP
+
+```
+
+``` {r}
+
+query2 = as.data.frame(s.object$cell_type) 
+rename(query2, cells = `s.object$cell_type`)
+
+query3 = as.data.frame(query$umap)
+
+umap_labels = left_join(rownames_to_column(rbind(as.data.frame(s.object$cell_type) %>% 
+                                         rename(cell_type = `s.object$cell_type`), 
+                                      as.data.frame(lazarescu.adipo.sq$author_cell_type) %>% 
+                                         rename(cell_type = `lazarescu.adipo.sq$author_cell_type`)),
+                                      var = "cells"),
+                        rownames_to_column(rbind(as.data.frame(reference$umap$embedding), 
+                                                 as.data.frame(query$umap)), 
+                                           var = "cells"),
+                        by = "cells") %>% 
+  mutate(dataset = ifelse(cell_type == "White Adipocytes", "query", "reference"))
+
+ggplot(umap_labels, aes(x = UMAP1, y = UMAP2, color = cell_type)) +
+  geom_point() +
+  facet_wrap(~dataset)
+
+```
+
+``` {r}
+
+query = knnPredict(query, reference, reference$meta_data$author_cell_type, k = 5)
+
+head(query$meta_data)
+
+
+
+umap_query <- left_join(rownames_to_column(query$meta_data['cell_type_pred_knn'], 
+                                           var = "cells"),
+                        rownames_to_column(as.data.frame(query$umap),
+                                           var = "cells"),
+                        by = "cells")
+
+ggplot(umap_query, aes(x = UMAP1, y = UMAP2, color = cell_type_pred_knn)) +
+  geom_point() 
+
+```
+
+## New Combined Plot
+
+
+#### Prepping VISION
+
+``` {r}
+
+lazarescu = schard::h5ad2seurat('/Users/seankodani/Library/CloudStorage/GoogleDrive-seankodani@yahoo.com/My Drive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Lazarescu 2025/Lazarescu_var_reset.h5ad')
+Idents(lazarescu) = "main_groups"
+lazarescu.adipo <- subset(lazarescu, idents = c("Adipocytes"))
+rm(lazarescu)
+
+```
+
+Next, the dataset is prepared according to the VISION workflow. In VISION, we will characterise the HEAT signature in addition to the general adipogenesis signature and the BATLAS signature produced by the Wolfrum laboratory. In this first part, the object is split into multiple parts that will be re-inserted into a vision object in the next step.
+
+```{r normalise-data, echo=FALSE}
+
+# lazarescu@assays[["RNA"]]@counts@Dimnames[[1]] <- lazarescu[["RNA"]]@meta.features$feature_name
+
+# Read in expression counts (Genes X Cells)
+counts <- lazarescu.adipo@assays$RNA@counts
+
+# Scale counts within a sample
+n.umi <- colSums(counts)
+scaled_counts <- t(t(counts) / n.umi) * median(n.umi)
+
+# Adding UMAP
+projection <- lazarescu.adipo@reductions$Xumap_@cell.embeddings
+
+# Read in meta data (Cells x Vars)
+meta = lazarescu.adipo@meta.data
+```
+
+This next chunk loads the VISION signatures, loads the data that was split in the previous chunk, then runs the algorithm. The resulting output is default saved as an object (since this process takes 10-20 minutes, this can expedite future analyses.
+
+```{r}
+
+Signatures="../Output/VISION/Gene Signatures/HEAT_BATLAS_Hallmark.gmt"
+
+vis <- Vision(scaled_counts, signatures = Signatures, meta = meta)
+vis <- addProjection(vis, "UMAP", projection)
+vis <- analyze(vis)
+
+saveRDS(vis, file = "../Output/26.Lazarescu_dataset_analysis/VISION_vat_HEAT.rds")
+# vis <- readRDS(file = "../Output/26.Lazarescu_dataset_analysis/VISION_vat_HEAT.rds")
+
+```
+
+``` {r}
+
+UMAP <- getProjections(vis)[["UMAP"]]
+HEAT <- getSignatureScores(vis)[, "UCP1_CORR_SUE_GAVRILA_TSENG"]
+BATLAS <- getSignatureScores(vis)[, "BATLAS"]
+Adipo <- getSignatureScores(vis)[, "HALLMARK_ADIPOGENESIS"]
+FA <- getSignatureScores(vis)[, "HALLMARK_FATTY_ACID_METABOLISM"]
+OxPhos <- getSignatureScores(vis)[, "HALLMARK_OXIDATIVE_PHOSPHORYLATION"]
+
+graph.data <- as.data.frame(UMAP) %>% 
+  rownames_to_column(var = "cells") %>% 
+  left_join(as.data.frame(HEAT) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(BATLAS) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(Adipo) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(FA) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  left_join(as.data.frame(OxPhos) %>% 
+              rownames_to_column(var = "cells"),
+            by = "cells") %>% 
+  gather(4:8, key = "Hallmark", value = "sigScores")
+
+```
+
+``` {r fig.height = 5, fig.width = 3}
+
+lazarescu.adipo$HEAT <- NA
+
+lazarescu.adipo$HEAT[which(rownames(lazarescu.adipo@meta.data) %in% (graph.data %>% 
+                                                 dplyr::filter(Hallmark == "HEAT") %>% 
+                                                 dplyr::filter(sigScores > 0.8))$cells)] <- "HEAT Score > 0.8"
+lazarescu.adipo$HEAT[which(rownames(lazarescu.adipo@meta.data) %in% (graph.data %>% 
+                                                 dplyr::filter(Hallmark == "HEAT") %>% 
+                                                 dplyr::filter(sigScores < 0.8))$cells)] <- "HEAT Score < 0.8"
+
+
+therm.genes <- c("PPARGC1A", "PRDM16","EBF2", "UCP1")
+
+Idents(lazarescu.adipo) = "HEAT"
+vat.bat <- VlnPlot(lazarescu.adipo,
+            features = therm.genes,
+        flip = TRUE,
+        stack = TRUE) + 
+  NoLegend() +
+  labs(title = "Lazarescu") +
+  theme(
+    plot.margin = margin(0, 0, 0, 25),
+    axis.title.x = element_blank()
+  ) 
+
+vat.bat
+
+```
+
+####
+
+``` {r}
+
+s.object.sce <- as.SingleCellExperiment(s.object)
+
+```

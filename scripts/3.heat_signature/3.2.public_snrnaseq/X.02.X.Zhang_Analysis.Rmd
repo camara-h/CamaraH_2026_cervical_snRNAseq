@@ -1,0 +1,78 @@
+---
+title: "X.02.X_Anguieira_Analysis"
+author: "Henrique"
+date: "2025-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Setting up environment ===================================================
+# Loading relevant libraries
+library(tidyverse) # includes ggplot2, for data visualisation. dplyr, for data manipulation.
+library(pheatmap) # for our heatmap
+library(RColorBrewer) # for a colourful plot
+library(Seurat)
+library(viridis)
+library(DGEobj.utils)
+library(patchwork)
+
+
+# Outputs
+OUTPUT_DATA_DIR <- here("output/3.heat_signature/3.public_snrnaseq/data")
+OUTPUT_FIGURE_DIR <- here("output/3.heat_signature/3.public_snrnaseq/figures")
+CLEANED_DATASET_DIR <- here("output/1.processing/data/cleaned_objects")
+
+dir.create(OUTPUT_DATA_DIR, showWarnings = F, recursive = T)
+dir.create(OUTPUT_FIGURE_DIR, showWarnings = F, recursive = T)
+dir.create(CLEANED_DATASET_DIR, showWarnings = F, recursive = T)
+```
+
+#Load the dataset
+
+```{r load-seurat}
+ZHANG_BAT_RDS_YOUNG <- "~/Projects/Joy_2025/data/Zhang_2025/GSE247719_PanSci_07_BAT_adata_young_wt.rds"
+
+"../Output/"
+s.object <- readRDS(ZHANG_BAT_RDS_YOUNG)
+```
+# --- Scale data 
+```{r}
+  #Scale data
+  s.object <- NormalizeData(object = s.object)
+  s.object <- FindVariableFeatures(object = s.object)
+  s.object <- ScaleData(object = s.object)
+```
+
+# --- Plot UCP1 expression
+```{r}
+FeaturePlot(s.object, features = "Ucp1", order = T)
+```
+
+```{r}
+meta <- s.object@meta.data
+meta |> distinct(Main_cell_type)
+Idents(s.object) <- "Main_cell_type"
+s.object.small <- subset(s.object, idents = c("Brown adipocytes", "Adipocytes"))
+
+df <- FetchData(s.object, vars = "Ucp1", layer = "data")
+head(df)
+
+str(s.object)
+```
+# Read VISION data
+```{r}
+ZHANG_VISION_SIGSCORE <- here("output/4.downstream_pipelines/vision/data/vision_signature_scores/2026_02_07_Zhang_bat_young_Dataset_VISION_sigScore.csv")
+sigscores_df <- read.csv(ZHANG_VISION_SIGSCORE)
+```
+
+## Merge data
+```{r}
+ucp1_v_sigscores <- sigscores_df |> 
+  left_join(df |> rownames_to_column("barcode"), by = "barcode")
+```
+
+## Save the data
+```{r}
+write_csv(ucp1_v_sigscores, file.path(OUTPUT_DATA_DIR,"Zhang_HEATvUCP1.csv"))
+```
+

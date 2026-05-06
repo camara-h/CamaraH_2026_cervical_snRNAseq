@@ -1,0 +1,427 @@
+---
+title: "36.ReferenceMappingSubtypes"
+output: html_document
+date: "2025-05-22"
+---
+
+# Purpose
+
+This notebook uses reference mapping to help label adipocyte and adipocyte
+progenitor subtypes in the neck adipose dataset by projecting query cells onto
+a published reference dataset from Emont et al.
+
+Two approaches are explored:
+
+1. Symphony reference mapping
+2. Seurat reference mapping
+
+The main biological goal is to use transferred subtype labels from the
+published reference to better interpret the adipocyte and ASPC subclusters in
+the study dataset.
+
+# Reference notes from Emont et al.
+
+For context, the Emont human adipocyte / ASPC reference includes several
+subclusters of interest:
+
+- hAd1, hAd3, hAd4, and hAd7 were primarily in SAT
+- hAd2 and hAd6 were primarily in VAT
+- hAd5 was more evenly distributed
+- hAd3 was associated with larger adipocytes and triglyceride synthesis
+- hAd4 and hAd7 were negatively associated with BMI
+- hAd6 expressed thermogenesis-related genes such as EBF2, PPARGC1A, and ESRRG
+- hASPC1 appeared closer to the more differentiated arm of ASPCs
+- hASPC2 resembled early multipotent progenitors
+- hASPC3 appeared committed but not yet fully differentiated
+- hASPC4 resembled anti-adipogenic AREG-like cells
+
+```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+library(Seurat)
+library(symphony)
+library(tidyverse)
+library(here)
+
+# -------------------------------------------------------------------------
+# Define inputs and outputs
+# -------------------------------------------------------------------------
+INPUT_EMONT_RDS <- HUMAN_SEURAT_DIR <- here("output", "4.downstream_pipelines", "vision", "data", "cleaned_datasets_human", "Emont_Dataset.rds") 
+
+INPUT_QUERY_RDS <- here(
+  "data",
+  "adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"
+)
+
+OUTPUT_DATA_DIR <- here("output", "4.downstream_pipelines", "reference_mapping", "data")
+OUTPUT_FIG_DIR  <- here("output", "4.downstream_pipelines", "reference_mapping", "figures")
+
+dir.create(OUTPUT_DATA_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(OUTPUT_FIG_DIR, recursive = TRUE, showWarnings = FALSE)
+
+# -------------------------------------------------------------------------
+# Helper loaders
+# -------------------------------------------------------------------------
+load_first_existing_rds <- function(primary_path, alternative_paths = NULL, object_label = "RDS file") {
+  if (file.exists(primary_path)) {
+    message("Loading ", object_label, " from primary path.")
+    return(readRDS(primary_path))
+  }
+
+  for (path in alternative_paths) {
+    if (file.exists(path)) {
+      message("Loading ", object_label, " from fallback path: ", path)
+      return(readRDS(path))
+    }
+  }
+
+  stop("Could not find ", object_label, ".")
+}
+```
+
+# Load the reference and query datasets
+
+```{r}
+# Load Emont reference dataset
+emont <- load_first_existing_rds(
+  primary_path = INPUT_EMONT_RDS,
+  alternative_paths = INPUT_EMONT_ALT,
+  object_label = "Emont reference dataset"
+)
+
+# Split the reference into ASPC and adipocyte compartments
+Idents(emont) <- "cell_type"
+ref.aspc  <- subset(emont, idents = c("ASPC"))
+ref.adipo <- subset(emont, idents = c("adipocyte"))
+rm(emont)
+
+# Load the main neck adipose dataset
+s.object <- load_first_existing_rds(
+  primary_path = INPUT_QUERY_RDS,
+  alternative_paths = INPUT_QUERY_ALT,
+  object_label = "main neck adipose dataset"
+)
+
+# Split the query into adipocyte and ASPC compartments
+Idents(s.object) <- "cell_type"
+adipocytes <- subset(s.object, idents = c("White Adipocytes"))
+aspc       <- subset(s.object, idents = c("Adipocyte Progenitor Cells"))
+rm(s.object)
+```
+
+# Reference mapping with Symphony
+
+This first mapping attempt uses Symphony, which extends Harmony-based
+integration for reference mapping.
+
+## Build the adipocyte reference object
+
+```{r}
+reference <- symphony::buildReference(
+  ref.adipo@assays$RNA["counts"],   # reference expression matrix, genes x cells
+  ref.adipo@meta.data,              # reference metadata, cells x attributes
+  vars = c("sample"),               # batch variable to harmonize over
+  K = 100,                          # number of Harmony soft clusters
+  verbose = TRUE,
+  do_umap = TRUE,                   # build a reference UMAP model
+  do_normalize = TRUE,              # log(CP10k) normalization of reference
+  vargenes_method = "vst",
+  vargenes_groups = "cell_type",    # group-aware variable gene selection
+  topn = 2000,
+  theta = 2,
+  d = 20,
+  additional_genes = NULL,
+  save_uwot_path = file.path(OUTPUT_DATA_DIR, "./testing_uwot_model_2")
+)
+
+umap_labels <- cbind(reference[["umap"]][["embedding"]], reference[["meta_data"]])
+
+ggplot(umap_labels, aes(x = UMAP1, y = UMAP2, color = cell_type)) +
+  geom_point()
+```
+
+## Map query adipocytes onto the adipocyte reference
+
+```{r}
+query <- mapQuery(
+  adipocytes@assays$RNA["counts"],  # query expression matrix, genes x cells
+  adipocytes@meta.data,             # query metadata
+  reference,                        # Symphony reference object
+  do_normalize = FALSE,             # query already normalized upstream
+  do_umap = TRUE                    # project query cells into reference UMAP
+)
+```
+
+## Transfer labels and store the projected UMAP in the query Seurat object
+
+```{r}
+query <- knnPredict(query, reference, reference$meta_data$cell_type, k = 5)
+
+adipocytes$cell_type_pred_knn <- query$meta_data$cell_type_pred_knn
+adipocytes$cell_type_pred_knn_prob <- query$meta_data$cell_type_pred_knn_prob
+
+query.reduction <- CreateDimReducObject(
+  embeddings = query$umap,
+  key = "ref.umap",
+  assay = DefaultAssay(adipocytes)
+)
+
+adipocytes[["ref_umap"]] <- query.reduction
+```
+
+## Visualize transferred adipocyte subtype labels
+
+```{r}
+DimPlot(
+  adipocytes,
+  reduction = "ref_umap",
+  group.by = "cell_type_pred_knn",
+  label = TRUE,
+  label.size = 6,
+  repel = TRUE
+)
+
+FeaturePlot(
+  adipocytes,
+  features = "ADIPOQ",
+  reduction = "ref_umap",
+  label = TRUE,
+  label.size = 3,
+  repel = TRUE
+) + NoLegend()
+
+VlnPlot(
+  adipocytes,
+  features = "PLIN4",
+  group.by = "cell_type_pred_knn"
+)
+
+query_labels <- cbind(query$meta_data, query$umap) %>%
+  mutate(dataset = ifelse(cell_type == "White Adipocytes", "query", "reference"))
+
+ggplot(query_labels, aes(x = UMAP1, y = UMAP2, color = cell_type_pred_knn)) +
+  geom_point() +
+  facet_wrap(~neck_region)
+```
+
+## Compare transferred subtype proportions across samples and neck regions
+
+```{r}
+table(query$meta_data$sample)
+
+neck_region <- distinct(query$meta_data[c("sample", "neck_region")])
+
+temp <- prop.table(table(query$meta_data$cell_type_pred_knn, query$meta_data$sample), margin = 2) %>%
+  as.data.frame() %>%
+  left_join(neck_region, by = c("Var2" = "sample"))
+
+ggplot(temp, aes(x = Var1, y = Freq, color = neck_region)) +
+  geom_boxplot(
+    position = position_dodge(width = 0.75),
+    width = 0.6,
+    fill = "transparent",
+    outlier.shape = NA
+  ) +
+  geom_jitter(
+    aes(x = Var1, y = Freq, color = neck_region),
+    position = position_dodge(width = 0.75),
+    alpha = 0.7,
+    size = 1.5
+  ) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73")) +
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73")) +
+  theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  ) +
+  labs(
+    color = "Neck Region",
+    x = "ASPC Subtype",
+    y = "Proportion"
+  )
+
+compare_means(
+  Freq ~ neck_region,
+  data = temp %>% filter(neck_region != "Intermediate"),
+  group.by = "Var1"
+)
+```
+
+## Stacked barplot of transferred subtype composition by neck region
+
+```{r fig.width = 4, fig.height = 6}
+stack_barplot <- temp %>%
+  group_by(neck_region, Var1) %>%
+  summarise(Freq = sum(Freq), .groups = "drop") %>%
+  ungroup()
+
+p1 <- ggplot(stack_barplot, aes(x = neck_region, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    x = "Neck Region",
+    y = "Proportion within Region",
+    title = "Distribution of Adipocyte Subtypes",
+    fill = "Subtypes"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(size = 12, angle = 45, vjust = 1.25, hjust = 1.25),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank()
+  )
+
+print(p1)
+```
+
+## Donut plot representation of transferred subtype composition
+
+```{r}
+donut_data <- temp %>%
+  group_by(neck_region, Var1) %>%
+  summarise(Freq_sum = sum(Freq), .groups = "drop_last") %>%
+  mutate(proportion = Freq_sum / sum(Freq_sum)) %>%
+  ungroup() %>%
+  group_by(neck_region) %>%
+  mutate(
+    cumulative_proportion = cumsum(proportion),
+    mid_point_proportion = cumulative_proportion - 0.5 * proportion
+  ) %>%
+  ungroup() %>%
+  mutate(
+    ring_pos = case_when(
+      neck_region == "Deep" ~ 1,
+      neck_region == "Intermediate" ~ 2,
+      neck_region == "Superficial" ~ 3
+    ),
+    ring_width = 0.9
+  )
+
+p2 <- ggplot(donut_data, aes(x = ring_pos, y = proportion, fill = Var1)) +
+  geom_col(width = donut_data$ring_width, color = "white") +
+  coord_polar(theta = "y") +
+  labs(
+    title = "Distribution of Adipocyte Subtypes",
+    fill = "Subtypes"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "right"
+  )
+
+print(p2)
+```
+
+# Reference mapping with Seurat
+
+This section keeps the second reference mapping strategy using Seurat.
+It follows the same general idea as the Symphony mapping above, but using
+Seurat’s anchor-based transfer framework.
+
+## Prepare reference and query objects
+
+```{r}
+# Ensure the reference and query objects have normalized data
+ref.adipo <- NormalizeData(ref.adipo)
+ref.adipo <- FindVariableFeatures(ref.adipo)
+
+adipocytes <- NormalizeData(adipocytes)
+adipocytes <- FindVariableFeatures(adipocytes)
+```
+
+## Find transfer anchors and map adipocyte query cells
+
+```{r}
+anchors.adipo <- FindTransferAnchors(
+  reference = ref.adipo,
+  query = adipocytes,
+  dims = 1:30
+)
+
+predictions.adipo <- TransferData(
+  anchorset = anchors.adipo,
+  refdata = ref.adipo$cell_type,
+  dims = 1:30
+)
+
+adipocytes <- AddMetaData(adipocytes, metadata = predictions.adipo)
+```
+
+## Visualize Seurat transfer results
+
+```{r}
+DimPlot(adipocytes, group.by = "predicted.id", label = TRUE, repel = TRUE)
+
+VlnPlot(
+  adipocytes,
+  features = "prediction.score.max",
+  group.by = "predicted.id"
+)
+```
+
+# ASPC mapping
+
+This section mirrors the adipocyte mapping workflow for adipocyte progenitor
+cells.
+
+## Build the ASPC reference object with Symphony
+
+```{r}
+reference.aspc <- symphony::buildReference(
+  ref.aspc@assays$RNA["counts"],
+  ref.aspc@meta.data,
+  vars = c("sample"),
+  K = 100,
+  verbose = TRUE,
+  do_umap = TRUE,
+  do_normalize = TRUE,
+  vargenes_method = "vst",
+  vargenes_groups = "cell_type",
+  topn = 2000,
+  theta = 2,
+  d = 20,
+  additional_genes = NULL,
+  save_uwot_path = file.path(OUTPUT_DATA_DIR ,"./testing_uwot_model_aspc")
+)
+```
+
+## Map ASPC query cells to the ASPC reference
+
+```{r}
+query.aspc <- mapQuery(
+  aspc@assays$RNA["counts"],
+  aspc@meta.data,
+  reference.aspc,
+  do_normalize = FALSE,
+  do_umap = TRUE
+)
+
+query.aspc <- knnPredict(query.aspc, reference.aspc, reference.aspc$meta_data$cell_type, k = 5)
+
+aspc$cell_type_pred_knn <- query.aspc$meta_data$cell_type_pred_knn
+aspc$cell_type_pred_knn_prob <- query.aspc$meta_data$cell_type_pred_knn_prob
+
+query.aspc.reduction <- CreateDimReducObject(
+  embeddings = query.aspc$umap,
+  key = "ref.umap",
+  assay = DefaultAssay(aspc)
+)
+
+aspc[["ref_umap"]] <- query.aspc.reduction
+```
+
+## Visualize ASPC mapping results
+
+```{r}
+DimPlot(
+  aspc,
+  reduction = "ref_umap",
+  group.by = "cell_type_pred_knn",
+  label = TRUE,
+  repel = TRUE
+)
+```

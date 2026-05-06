@@ -1,0 +1,122 @@
+
+```{r setup, include=FALSE}
+
+library(ggplot2)
+library(stringr)
+library(clusterProfiler)
+library(msigdbr)
+library(org.Hs.eg.db)        # or org.Mm.eg.db for mouse
+library(dplyr)
+library(DESeq2)
+library(ggrepel)
+library(tidyverse)
+
+
+# --- Set up pathways ---
+## Inputs
+DESEQ_OBJ_LIST <- here("output/4.downstream_pipelines/de_analysis/data/deseq2_object_list.rds")
+
+## Outputs
+OUT_DIR <- here("output/4.downstream_pipelines/de_analysis/data/")
+dir.create(OUT_DIR, showWarnings = F, recursive = T)
+
+OUTPUT_HALLMARK <- file.path(OUT_DIR, "HallMark_GSEA.csv")
+OUTPUT_GO <- file.path(OUT_DIR, "GO_GSEA.csv")
+OUTPUT_REACTOME <- file.path(OUT_DIR, "Reactome_GSEA.csv")
+```
+
+# --- Load DESeq2 results---
+Those are pairwise comparisons. Each list element has results for all the cell types
+We will filter for White Adipocytes
+
+```{r}
+# Load
+deseq2_list <- readRDS(DESEQ_OBJ_LIST)
+
+#Subset res for White Adipocytes - Neck Comparison
+res <- as.data.frame(results(deseq2_list$Threshold_10$`White Adipocytes`, name = "neck_region_Superficial_vs_Deep"))
+res <- res %>%
+  rownames_to_column("gene")
+```
+
+## --- Load the Database for GSEA ---
+
+```{r}
+# 1) prerank by “stat” as above:
+# Drop any NAs, turn it into a named numeric vector:
+#Pull the stat values, which weight the direction and uncertainty
+geneList_stat <- res %>%
+  filter(!is.na(stat)) %>%
+  arrange(desc(stat)) %>%
+  { setNames(.$stat, .$gene) }
+
+# 2) grab Reactome from MSigDB (C2 collection, subcollection CP:REACTOME)
+reactome_msig <- msigdbr(
+  species    = "Homo sapiens",
+  collection   = "C2",
+  subcollection = "CP:REACTOME"
+) %>% select(gs_name, gene_symbol)
+
+gsea_Rctm <- GSEA(
+  geneList       = geneList_stat,
+  TERM2GENE      = reactome_msig,
+   pvalueCutoff   = 0.25,            # looser cutoff
+  pAdjustMethod  = "BH",           # still controlling FDR
+  minGSSize      = 10,              # include small sets
+  maxGSSize      = 300,           # allow big sets
+  seed           = 1234,           # reproducible
+  verbose        = FALSE
+)
+
+
+# 3) grab GO‐Biological Process (C5 collection, subcollection GO:BP)
+go_bp_msig <- msigdbr(
+  species    = "Homo sapiens",
+  collection   = "C5",
+  subcollection= "GO:BP"
+) %>% select(gs_name, gene_symbol)
+
+gsea_GO_BP <- GSEA(
+  geneList     = geneList_stat,
+  TERM2GENE    = go_bp_msig,
+   pvalueCutoff   = 0.25,            # looser cutoff
+  pAdjustMethod  = "BH",           # still controlling FDR
+  minGSSize      = 10,              # include small sets
+  maxGSSize      = 300,           # allow big sets
+  seed           = 1234,           # reproducible
+  verbose        = FALSE
+)
+
+
+# 4) grap Hallmark
+m_df <- msigdbr(species = "Homo sapiens", 
+                collection = "H")  # “H” = Hallmark
+# keep only gene_symbol + gs_name
+hallmark <- m_df %>% dplyr::select(gs_name, gene_symbol)
+
+gsea_hallmark <- GSEA(
+  geneList       = geneList_stat,
+  TERM2GENE      = hallmark,
+  pvalueCutoff   = 0.25,            # looser cutoff
+  pAdjustMethod  = "BH",           # still controlling FDR
+  minGSSize      = 10,              # include small sets
+  maxGSSize      = 300,           # allow big sets
+  seed           = 1234,           # reproducible
+  verbose        = FALSE
+)
+```
+## --- Save Results ---
+```{r}
+write_csv(as.data.frame(gsea_hallmark), file = OUTPUT_HALLMARK)
+write_csv(as.data.frame(gsea_GO_BP), file = OUTPUT_GO)
+write_csv(as.data.frame(gsea_Rctm), file = OUTPUT_REACTOME)
+```
+
+## --- Session Info ---
+```{r}
+writeLines(
+  capture.output(sessionInfo()),
+  file.path(OUT_DIR, "sessionInfo_pseudobulk_GSEA.txt")
+)
+```
+
