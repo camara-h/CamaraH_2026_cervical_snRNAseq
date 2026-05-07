@@ -116,6 +116,7 @@ neck.color <- c(
 # Gene type palette
 gene_type_palette <- c(
   "ADIPOQ" = "#ffe65a",
+  "PPARG" = "#ffe65a",
   "PPARGC1A" = "#97600f",
   "PDGFRA" = "#629372",
   "DCN" = "#0098ae",
