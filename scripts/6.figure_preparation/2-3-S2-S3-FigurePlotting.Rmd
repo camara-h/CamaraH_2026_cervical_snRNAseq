@@ -68,6 +68,11 @@ PARAGANG_BULK_MTX_RDS <- here("output/3.heat_signature/3.public_bulkrnaseq/data/
 BULK_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/data/Cleaned_Datasets")
 BULK_META_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/data/Experimental_Design")
 
+A41_CTS_CSV <- here("data/6.internal_datasets/Tseng_Datasets/Supplementary_Table_a41_fpkm.csv")
+A38_CTS_CSV <- here("data/6.internal_datasets/Tseng_Datasets/Supplementary_Table_a38_tpm.xlsx")
+CERO_CTS_XLSX <- here("data/5.published_datasets/Public_BulkRNAseq/Cero 2023/RNA-seq data set Cero et al.xlsx")
+
+
 
 # VISION
 VISION_SIG_DIR <- here("output/4.downstream_pipelines/vision/data/vision_signature_scores")
@@ -1553,6 +1558,179 @@ ggsave(file.path(OUTPUT_DIR, "S3D-I_heat_featplot_alldataset.pdf"), plot = gg_he
 
 ```
 
+# --- Panel S3J. In vitro HEAT singature expression ---
+## Load heat signature
+```{r}
+load(HEAT_SIGNATURE_RDATA) #Creates HEAT_signature
+```
+
+
+## --- A38 Cells - Plotting and save ---
+``` {r fig.height = 2, fig.width = 3.5}
+library(openxlsx)
+a38.cells <- read.xlsx(A38_CTS_CSV, rowNames = F) %>%
+  dplyr::select(-1, -transcript_id.s.)
+names(a38.cells) <- gsub("\\.", " ", names(a38.cells))
+
+a38.de.data <- a38.cells[!duplicated(a38.cells$Symbol) & !duplicated(a38.cells$Symbol, fromLast = TRUE), ] %>%
+  select(-1) %>%
+  remove_rownames() %>%
+  column_to_rownames(var = "Symbol") %>%
+  as.matrix()
+
+a38.metadata <- data.frame(
+  samples = colnames(a38.de.data),
+  separate = colnames(a38.de.data)
+) %>%
+  separate(col = separate, into = c("Type", "Diff_Day", "Sample"), sep = "-") %>%
+  mutate(Type = ifelse(Type == "A38 W", "A38 WAT", Type))
+
+heatmap <- as.matrix(a38.cells %>%
+  dplyr::filter(Symbol %in% c("UCP1", HEAT_signature)) %>%
+  select(
+    Symbol, 
+    "A38 WAT-D18-1", "A38 WAT-D18-2", "A38 WAT-D18-3",
+    "A38 BAT-D18-1", "A38 BAT-D18-2", "A38 BAT-D18-3"
+  ) %>%
+  column_to_rownames(var = "Symbol"))
+
+# Filter metadata to keep only selected samples
+a38.metadata <- a38.metadata[a38.metadata$samples %in% colnames(heatmap),]
+
+custom.order <- c("UCP1", sort(HEAT_signature))
+
+pdf(file.path(OUTPUT_DIR,"S3J_A38_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
+
+pheatmap(heatmap[custom.order, , drop = FALSE],
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  cellwidth = 12,
+  cellheight = 7.2,
+  fontsize = 7,
+  gaps_row = 1,
+  gaps_col = c(3),
+  legend = TRUE,
+  annotation_col = a38.metadata %>%
+    remove_rownames() %>%
+    column_to_rownames(var = "samples") %>%
+    select(1:2) %>%
+    mutate(Type = ifelse(Type == "A38 WAT", "A38 hWAd", "A38 hBAd")) %>%
+    mutate(Diff_Day = factor(Diff_Day, levels = c("D0", "D6", "D9", "D12", "D15", "D18"))),
+  annotation_colors = list("Diff_Day" = c("D0" = "grey", "D18" = "black"),
+                           "Type" = c("A38 hBAd" = "#b3575e", "A38 hWAd" = "#313594")),
+  scale = "row"
+)
+
+dev.off()
+
+grep("COB", a38.cells$Symbol, value = T)
+a38.cells |>  filter(Symbol %in% custom.order) |> select("Symbol", contains("D18"))
+
+a38.cells |> select(contains("A38")) |> colSums(na.rm = TRUE)
+```
+
+## --- A41 Cells - Plotting and save ---
+``` {r}
+a41.cells <- read_csv(file = A41_CTS_CSV) %>%
+  dplyr::select(-gene_id, -transcript_ids, -Species, -Name, -Description)
+
+a41.de.data <- a41.cells[!duplicated(a41.cells$Symbol) & !duplicated(a41.cells$Symbol, fromLast = TRUE), ] %>%
+  column_to_rownames(var = "Symbol") %>%
+  select(
+    -"EV-D0-4_FPKM", -"EV-D0-5_FPKM", -"EV-D0-6_FPKM",
+    -"BAT-D0-4_FPKM", -"BAT-D0-5_FPKM", -"BAT-D0-6_FPKM",
+    -"OE-D0-4_FPKM", -"OE-D0-5_FPKM", -"OE-D0-6_FPKM",
+    -"OE-D0-4_FPKM", -"OE-D0-5_FPKM", -"OE-D0-6_FPKM",
+    -"OE-D9-1_FPKM", -"OE-D9-2_FPKM", -"OE-D9-3_FPKM",
+    -"OE-D12-1_FPKM", -"OE-D12-2_FPKM", -"OE-D12-3_FPKM",
+    -"OE-D18-1_FPKM", -"OE-D18-2_FPKM", -"OE-D18-3_FPKM"
+  ) %>%
+  as.matrix()
+
+a41.metadata <- data.frame(
+  samples = colnames(a41.de.data),
+  separate = colnames(a41.de.data)
+) %>%
+  separate(col = separate, into = c("Type", "Diff_Day", "Sample"), sep = "-")
+
+heatmap <- a41.cells %>%
+  dplyr::filter(Symbol %in% c("UCP1", HEAT_signature)) %>%
+  select(Symbol, 
+          "EV-D18-1_FPKM", "EV-D18-2_FPKM", "EV-D18-3_FPKM", 
+          "BAT-D18-1_FPKM", "BAT-D18-2_FPKM", "BAT-D18-3_FPKM") %>% 
+  column_to_rownames(var = "Symbol") %>%
+  as.matrix()
+
+custom.order <- c("UCP1", sort(HEAT_signature))
+
+pdf(file.path(OUTPUT_DIR,"S3J_A41_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
+pheatmap(heatmap[custom.order, , drop = FALSE],
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  cellwidth = 12,
+  cellheight = 7.2,
+  fontsize = 6,
+  gaps_row = 1,
+  gaps_col = c(3),
+  legend = TRUE,
+  annotation_col = a41.metadata %>%
+    filter(samples %in% colnames(heatmap)) %>%
+    column_to_rownames(var = "samples") %>%
+    select(1:2) %>%
+    mutate(Type = ifelse(Type == "EV", "A41 hWAd", "A41 hBAd")) %>%
+    mutate(Diff_Day = factor(Diff_Day, levels = c("D0", "D9", "D12", "D18"))),
+    annotation_colors = list("Diff_Day" = c("D9" = "grey", "D18" = "black"),
+                           "Type" = c("A41 hBAd" = "#b3575e", "A41 hWAd" = "#313594")),
+
+  scale = "row"
+)
+dev.off()
+a41.cells |>  filter(Symbol %in% custom.order) |> select("Symbol", contains("D18")) |> select(!contains("OE"))
+
+```
+
+## --- Cero et al. 2023 - Plotting and save ---
+```{r}
+cero <- read.xlsx(CERO_CTS_XLSX)
+
+cero_mtx <- cero %>%
+  column_to_rownames(var = "Name") %>%
+  select(contains("d30.CPM")) %>%
+  as.matrix()
+
+cero_metadata <- data.frame(
+  samples = colnames(cero_mtx),
+  separate = colnames(cero_mtx)
+) %>%
+  separate(col = separate, into = c("Type", "Diff_Day", "Count_Type", "Replicate"), sep = "\\.")
+
+heatmap <- cero_mtx 
+
+custom.order <- c("UCP1", sort(HEAT_signature))
+
+pdf(file.path(OUTPUT_DIR,"S3J_cero_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
+pheatmap(heatmap[custom.order, , drop = FALSE],
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  cellwidth = 12,
+  cellheight = 7.2,
+  fontsize = 6,
+  gaps_row = 1,
+  gaps_col = c(4),
+  legend = TRUE,
+  annotation_col = cero_metadata %>%
+    filter(samples %in% colnames(heatmap)) %>%
+    column_to_rownames(var = "samples") %>%
+    select(1:2) %>%
+    mutate(Diff_Day = factor(toupper(Diff_Day), levels = c("D0", "D30"))),
+    annotation_colors = list("Diff_Day" = c("D0" = "grey", "D30" = "black"),
+                           "Type" = c("hBA" = "#b3575e", "hWA" = "#313594")),
+
+  scale = "row"
+)
+dev.off()
+```
+
 # --- Panel S3K-M. Angueira Adipocyte Subset ---
 ## --- Load files ---
 ```{r}
@@ -1991,7 +2169,7 @@ ggsave(file.path(OUTPUT_DIR, "3E-H_heat_ckmt2_bulk_corrplot.pdf"), plot = gg_hea
 ```{r}
 expression_matrix <- read_rds(PARAGANG_BULK_MTX_RDS)
 
-pdf(file.path(OUTPUT_DIR, "S2F_paragang_heatmap.pdf"), height = mm_to_in(180), width = mm_to_in(45))
+pdf(file.path(OUTPUT_DIR, "S3A_paragang_heatmap.pdf"), height = mm_to_in(180), width = mm_to_in(45))
 # Create heatmap
 pheatmap::pheatmap(expression_matrix,
   scale = "row", # Normalize rows (genes)

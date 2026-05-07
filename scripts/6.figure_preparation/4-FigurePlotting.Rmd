@@ -1,5 +1,5 @@
 ---
-title: "3-FigurePlotting"
+title: "4-FigurePlotting"
 author: "Henrique"
 date: "2025-07-17"
 output: html_document
