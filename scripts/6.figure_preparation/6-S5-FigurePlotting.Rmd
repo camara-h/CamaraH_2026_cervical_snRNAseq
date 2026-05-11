@@ -56,7 +56,7 @@ MULTIOME_SEURAT_RDS <- here("data_onedrive/9.multiome_data/multiome_seurat.rds")
 
 
 # Outputs
-OUTPUT_DIR <- here("output", "5.figure_preparation", "Figure_4")
+OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_6_S5")
 
 dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
 ```

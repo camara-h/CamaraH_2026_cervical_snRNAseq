@@ -78,7 +78,7 @@ SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec
 MEBOCOST_COMM_CSV <- here("output/4.downstream_pipelines/mebocost/data/communication_result_multi.csv")
 
 # Outputs
-OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_5-S4")
+OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_5_S4")
 
 dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
 ```

@@ -97,7 +97,7 @@ GTEX_AOV_STATS_SIGNIF_CSV <- here("output/3.heat_signature/5.gtex/data/significa
 GTEX_META_ANNOT_CSV <- here("./local_data/gtex/GTEx_Analysis_2017-06-05_v8_Annotations_GTEx_Analysis_2017-06-05_v8_Annotations_SubjectPhenotypesDD.xlsx")
 
 # Outputs
-OUTPUT_DIR <- here("output/6.figure_preparation/Figure_2")
+OUTPUT_DIR <- here("output/6.figure_preparation/Figure_2_3_S2_S3")
 
 dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
 ```
