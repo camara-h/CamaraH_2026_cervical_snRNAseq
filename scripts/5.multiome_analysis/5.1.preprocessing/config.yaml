@@ -1,0 +1,233 @@
+results_dir: /home/camarah/storage/Tseng_Neck_Multiome_2026/03_cellranger/ref_2020
+log_dir: /home/camarah/storage/Tseng_Neck_Multiome_2026/06_logs/ref_2020
+cellranger:
+  transcriptome_ref: ###ADD_NEW_REF
+  default_localcores: 8
+  default_localmem_gb: 60
+  chemistry: ARC-v1
+  include_introns: true
+  create_bam: true
+
+
+cellranger_arc:
+  arc_ref: /home/camarah/storage/10XTools/arc_reference/refdata-cellranger-arc-GRCh38-2020-A-2.0.0
+  default_localcores: 10
+  default_localmem_gb: 64
+  create_bam: true
+
+
+
+# gex_samples:
+#   AB_GEX_001_OM:
+#     fastq_dir: /n/storage/patti/data/AB_fastqs/AB_GEX_001_OM/fastqs
+#     sample_name: 001_OM
+
+arc_samples:
+  ENTRY005_PV:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/ENTRY005_PV
+        sample: ENTRY005_PV
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/ENTRY005_PV
+        sample: ENTRY005_PV
+        library_type: Chromatin Accessibility
+
+  ENTRY005_SP:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/ENTRY005_SP
+        sample: ENTRY005_SP
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/ENTRY005_SP
+        sample: ENTRY005_SP
+        library_type: Chromatin Accessibility
+
+  ENTRY005_SQ:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/ENTRY005_SQ
+        sample: ENTRY005_SQ
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/ENTRY005_SQ
+        sample: ENTRY005_SQ
+        library_type: Chromatin Accessibility
+
+  FREYA006_PV:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/FREYA006_PV
+        sample: FREYA006_PV
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/FREYA006_PV
+        sample: FREYA006_PV
+        library_type: Chromatin Accessibility
+
+  FREYA006_SQ:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/FREYA006_SQ
+        sample: FREYA006_SQ
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/FREYA006_SQ
+        sample: FREYA006_SQ
+        library_type: Chromatin Accessibility
+
+  HAPPY008_CS:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/HAPPY008_CS
+        sample: HAPPY008_CS_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/HAPPY008_CS
+        sample: HAPPY008_CS
+        library_type: Chromatin Accessibility
+
+  HAPPY008_SC:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/HAPPY008_SC
+        sample: HAPPY008_SC_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/HAPPY008_SC
+        sample: HAPPY008_SC
+        library_type: Chromatin Accessibility
+
+  ICING009_DC:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/ICING009_DC
+        sample: ICING009_DC_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/ICING009_DC
+        sample: ICING009_DC
+        library_type: Chromatin Accessibility
+
+  ICING009_SC:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/ICING009_SC
+        sample: ICING009_SC_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/ICING009_SC
+        sample: ICING009_SC
+        library_type: Chromatin Accessibility
+
+  JOYES010_PS:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/JOYES010_PS
+        sample: JOYES010_PS
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/JOYES010_PS
+        sample: JOYES010_PS
+        library_type: Chromatin Accessibility
+
+  KARMA011_DC:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/KARMA011_DC
+        sample: KARMA011-DC
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/KARMA011_DC
+        sample: KARMA011_DC
+        library_type: Chromatin Accessibility
+
+  KARMA011_SC:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/KARMA011_SC
+        sample: KARMA011_SC
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/KARMA011_SC
+        sample: Karma011_SC
+        library_type: Chromatin Accessibility
+
+  LEAFY012_DC:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/LEAFY012_DC
+        sample: LEAFY012_DC_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/LEAFY012_DC
+        sample: LEAFY012_DC
+        library_type: Chromatin Accessibility
+
+  LEAFY012_PS:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/LEAFY012_PS
+        sample: LEAFY012_PS_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/LEAFY012_PS
+        sample: LEAFY012_PS
+        library_type: Chromatin Accessibility
+
+  MAPLE013_CS:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/MAPLE013_CS
+        sample: MAPLE013_CS_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/MAPLE013_CS
+        sample: MAPLE013_CS
+        library_type: Chromatin Accessibility
+
+  MAPLE013_SC:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/MAPLE013_SC
+        sample: MAPLE013_SC_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/MAPLE013_SC
+        sample: MAPLE013_SC
+        library_type: Chromatin Accessibility
+
+  NEVIS_014:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/NEVIS_014
+        sample: NEVIS_014_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/NEVIS_014
+        sample: NEVIS_014
+        library_type: Chromatin Accessibility
+
+  QUAIL017_PV:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/QUAIL017_PV
+        sample: QUAIL017-PV
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/QUAIL017_PV
+        sample: QUAIL017_PV
+        library_type: Chromatin Accessibility
+
+  QUAIL017_SC:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/QUAIL017_SC
+        sample: QUAIL017-SC
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/QUAIL017_SC
+        sample: QUAIL017_SC
+        library_type: Chromatin Accessibility
+
+  RUGBY018_PP:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/RUGBY018_PP
+        sample: RUGBY018_PP_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/RUGBY018_PP
+        sample: RUGBY018_PP
+        library_type: Chromatin Accessibility
+
+  RUGBY018_PV:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/RUGBY018_PV
+        sample: RUGBY018_PV_GEX
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/RUGBY018_PV
+        sample: RUGBY018_PV
+        library_type: Chromatin Accessibility
+
+  TRUTH020_BAT:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/TRUTH020_BAT
+        sample: TRUTH020-BAT
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/TRUTH020_BAT
+        sample: TRUTH020_DN
+        library_type: Chromatin Accessibility
+
+  TRUTH020_WAT:
+    libraries:
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/GEX/TRUTH020_WAT
+        sample: TRUTH020-WAT
+        library_type: Gene Expression
+      - fastqs: /home/camarah/storage/Tseng_Neck_Multiome_2026/01_fastq/ATAC/TRUTH020_WAT
+        sample: TRUTH020_PP
+        library_type: Chromatin Accessibility
+
+

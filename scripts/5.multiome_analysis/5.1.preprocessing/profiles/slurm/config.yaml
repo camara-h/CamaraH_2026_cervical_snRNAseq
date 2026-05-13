@@ -1,0 +1,8 @@
+cluster: "sbatch --cpus-per-task={threads} --mem={resources.mem_mb}M --time={resources.time} --job-name=smk_{rule} --output=logs/slurm/%x_%j.out"
+jobs: 50
+default-resources:
+  - mem_mb=8000
+  - time="24:00:00"
+restart-times: 1
+max-jobs-per-second: 5
+max-status-checks-per-second: 5

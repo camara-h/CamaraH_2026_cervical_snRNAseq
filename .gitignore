@@ -106,8 +106,8 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 .RDataTmp
-# Hold back unfinished multiome scripts
-scripts/5.multiome_analysis/
+
+
 # Ignore .git backup
 .git_old_history_backup
 extract_figure_inputs.R

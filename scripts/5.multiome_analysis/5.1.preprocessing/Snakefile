@@ -1,0 +1,112 @@
+import os
+import pandas as pd
+
+configfile: "config.yaml"
+
+RESULTS_DIR = config.get("results_dir", "results")
+LOG_DIR = config.get("log_dir", os.path.join(RESULTS_DIR, "logs"))
+
+GEX_SAMPLES = list(config.get("gex_samples", {}).keys())
+ARC_SAMPLES = list(config.get("arc_samples", {}).keys())
+
+shell.executable("bash")
+
+rule all:
+    input:
+        expand(os.path.join(RESULTS_DIR, "cellranger", "{sample}", "outs", "filtered_feature_bc_matrix.h5"), sample=GEX_SAMPLES),
+        expand(os.path.join(RESULTS_DIR, "cellranger_arc", "{sample}", "outs", "filtered_feature_bc_matrix.h5"), sample=ARC_SAMPLES)
+
+rule make_arc_libraries_csv:
+    #input:
+    #    "config.yaml" # When config is changed is usually changing fastq sample ID, thus regenerate libraries.csv
+    output:
+        csv=os.path.join(RESULTS_DIR, "cellranger_arc_libraries", "{sample}.libraries.csv")
+    run:
+        libs = config["arc_samples"][wildcards.sample]["libraries"]
+        df = pd.DataFrame(libs)
+        required = {"fastqs", "sample", "library_type"}
+        missing = required.difference(df.columns)
+        if missing:
+            raise ValueError(f"libraries for {wildcards.sample} missing columns: {sorted(missing)}")
+        os.makedirs(os.path.dirname(output.csv), exist_ok=True)
+        df.to_csv(output.csv, index=False)
+
+rule cellranger_count:
+    input:
+        fastq_dir=lambda wc: config["gex_samples"][wc.sample]["fastq_dir"],
+        ref=lambda wc: config["cellranger"]["transcriptome_ref"]
+    output:
+        sentinel=os.path.join(RESULTS_DIR, "cellranger", "{sample}", "outs", "filtered_feature_bc_matrix.h5")
+    log:
+        os.path.join(LOG_DIR, "cellranger", "{sample}.log")
+    params:
+        out_parent=lambda wc: os.path.join(RESULTS_DIR, "cellranger"),
+        sample_name=lambda wc: config["gex_samples"][wc.sample].get("sample_name", wc.sample),
+        chemistry=lambda wc: config["gex_samples"][wc.sample].get("chemistry", config["cellranger"].get("chemistry", "auto")),
+        create_bam=lambda wc: str(config["gex_samples"][wc.sample].get("create_bam", config["cellranger"].get("create_bam", True))).lower(),
+        include_introns=lambda wc: str(config["gex_samples"][wc.sample].get("include_introns", config["cellranger"].get("include_introns", True))).lower(),
+        localmem=lambda wc: config["gex_samples"][wc.sample].get("localmem_gb", config["cellranger"].get("default_localmem_gb", 60)),
+        run_id=lambda wc: wc.sample
+    threads:
+        lambda wc: config["gex_samples"][wc.sample].get("localcores", config["cellranger"].get("default_localcores", 8))
+    resources:
+        mem_mb=lambda wc, threads: int(config["gex_samples"][wc.sample].get("localmem_gb", config["cellranger"].get("default_localmem_gb", 60)) * 1024),
+        time=lambda wc, threads: config["gex_samples"][wc.sample].get("time", "24:00:00")
+    shell:
+        r'''
+        set -euo pipefail
+        mkdir -p {params.out_parent}
+        mkdir -p "$(dirname {log})"
+        cd {params.out_parent}
+        if [ -d "{params.run_id}" ] && [ ! -f "{output.sentinel}" ]; then
+          rm -rf "{params.run_id}"
+        fi
+        cellranger count \
+          --id={params.run_id} \
+          --transcriptome={input.ref} \
+          --fastqs={input.fastq_dir} \
+          --sample={params.sample_name} \
+          --localmem={params.localmem} \
+          --localcores={threads} \
+          --chemistry={params.chemistry} \
+          --create-bam={params.create_bam} \
+          --include-introns={params.include_introns} \
+          > {log} 2>&1
+        '''
+
+rule cellranger_arc_count:
+    input:
+        libs=os.path.join(RESULTS_DIR, "cellranger_arc_libraries", "{sample}.libraries.csv"),
+        ref=lambda wc: config["cellranger_arc"]["arc_ref"]
+    output:
+        sentinel=os.path.join(RESULTS_DIR, "cellranger_arc", "{sample}", "outs", "filtered_feature_bc_matrix.h5")
+    log:
+        os.path.join(LOG_DIR, "cellranger_arc", "{sample}.log")
+    params:
+        out_parent=lambda wc: os.path.join(RESULTS_DIR, "cellranger_arc"),
+        run_id=lambda wc: wc.sample,
+        create_bam=lambda wc: str(config["arc_samples"][wc.sample].get("create_bam", config["cellranger_arc"].get("create_bam", True))).lower(),
+        localmem=lambda wc: config["arc_samples"][wc.sample].get("localmem_gb", config["cellranger_arc"].get("default_localmem_gb", 64))
+    threads:
+        lambda wc: config["arc_samples"][wc.sample].get("localcores", config["cellranger_arc"].get("default_localcores", 16))
+    resources:
+        mem_mb=lambda wc, threads: int(config["arc_samples"][wc.sample].get("localmem_gb", config["cellranger_arc"].get("default_localmem_gb", 64)) * 1024),
+        time=lambda wc, threads: config["arc_samples"][wc.sample].get("time", "48:00:00")
+    shell:
+        r'''
+        set -euo pipefail
+        mkdir -p {params.out_parent}
+        mkdir -p "$(dirname {log})"
+        cd {params.out_parent}
+        if [ -d "{params.run_id}" ] && [ ! -f "{output.sentinel}" ]; then
+          rm -rf "{params.run_id}"
+        fi
+        cellranger-arc count \
+          --id={params.run_id} \
+          --reference={input.ref} \
+          --libraries={input.libs} \
+          --localcores={threads} \
+          --localmem={params.localmem} \
+          --create-bam={params.create_bam} \
+          > {log} 2>&1
+        '''
