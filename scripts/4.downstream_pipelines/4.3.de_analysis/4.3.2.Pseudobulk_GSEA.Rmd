@@ -112,6 +112,39 @@ write_csv(as.data.frame(gsea_GO_BP), file = OUTPUT_GO)
 write_csv(as.data.frame(gsea_Rctm), file = OUTPUT_REACTOME)
 ```
 
+```{r}
+OUTPUT_GSEA_XLSX <- file.path(OUT_DIR, "GSEA_results.xlsx")
+
+## --- Save Results ---
+
+# Convert GSEA results to data frames once
+hallmark_df <- as.data.frame(gsea_hallmark)
+go_bp_df    <- as.data.frame(gsea_GO_BP)
+reactome_df <- as.data.frame(gsea_Rctm)
+
+# Save individual CSVs
+write_csv(hallmark_df, file = OUTPUT_HALLMARK)
+write_csv(go_bp_df,    file = OUTPUT_GO)
+write_csv(reactome_df, file = OUTPUT_REACTOME)
+
+# Save one Excel workbook with one sheet per GSEA database
+library(openxlsx)
+
+gsea_wb <- createWorkbook()
+
+addWorksheet(gsea_wb, "Hallmark")
+writeData(gsea_wb, "Hallmark", hallmark_df)
+
+addWorksheet(gsea_wb, "GO_BP")
+writeData(gsea_wb, "GO_BP", go_bp_df)
+
+addWorksheet(gsea_wb, "Reactome")
+writeData(gsea_wb, "Reactome", reactome_df)
+
+saveWorkbook(gsea_wb, OUTPUT_GSEA_XLSX, overwrite = TRUE)
+```
+
+
 ## --- Session Info ---
 ```{r}
 writeLines(
