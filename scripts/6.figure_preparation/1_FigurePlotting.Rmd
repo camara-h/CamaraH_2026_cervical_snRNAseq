@@ -29,45 +29,51 @@ Main outputs:
 knitr::opts_chunk$set(echo = TRUE)
 
 library(Seurat)
-library(tidyverse)
 library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(purrr)
+library(tibble)
+library(stringr)
+library(forcats)
 library(ggpubr)
 library(patchwork)
 library(speckle)
-library(ggnewscale)
+# library(ggnewscale)
 library(here)
 library(openxlsx)
 
 # Shared plotting functions and manuscript palettes
-source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
 
 # -------------------------------------------------------------------------
 # Define inputs
 # -------------------------------------------------------------------------
 SEURAT_FILE <- here(
-  "data",
-  "adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"
-)
+  "..",
+  "/data/cervical_at_gex_seurat.rds")
 
+# Raw subject info will be deposited in protected repo
 SUBJECT_INFO_FILE <- here(
   "data",
   "2023-09-14_SubjectInformationTable.xlsx"
 )
 
 PROPELLER_PROPORTIONS <- here(
-  "output", "2.sobject_characterization", "propeller", "data",
-  "propeller_cellular_proportions_table.csv"
+  "..",
+  "/data/figure_1/propeller_cellular_proportions_table.csv"
 )
 
 PROPELLER_STATS <- here(
-  "output", "2.sobject_characterization", "propeller", "data",
-  "proportions_stat_table.csv"
+  "..",
+  "/data/figure_1/propeller_proportions_stat_table.csv"
 )
 
 # -------------------------------------------------------------------------
 # Define outputs
 # -------------------------------------------------------------------------
-OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_1")
+OUTPUT_DIR <- here("..", "results", "Figure_1")
 dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
 ```
 
