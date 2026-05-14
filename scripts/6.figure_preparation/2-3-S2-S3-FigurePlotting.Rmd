@@ -68,8 +68,8 @@ PARAGANG_BULK_MTX_RDS <- here("output/3.heat_signature/3.public_bulkrnaseq/data/
 BULK_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/data/Cleaned_Datasets")
 BULK_META_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/data/Experimental_Design")
 
-A41_CTS_CSV <- here("data/6.internal_datasets/Tseng_Datasets/camaraH_a41_d18_fpkm.xlsx")
-A38_CTS_CSV <- here("data/6.internal_datasets/Tseng_Datasets/camaraH_a38_d18_tpm.xlsx")
+A41_CTS_CSV <- here("data/6.internal_datasets/Tseng_Datasets/Supplementary_Table_a41_fpkm.csv")
+A38_CTS_CSV <- here("data/6.internal_datasets/Tseng_Datasets/Supplementary_Table_a38_tpm.xlsx")
 CERO_CTS_XLSX <- here("data/5.published_datasets/Public_BulkRNAseq/Cero 2023/RNA-seq data set Cero et al.xlsx")
 
 
@@ -1631,12 +1631,20 @@ a38.cells |> select(contains("A38")) |> colSums(na.rm = TRUE)
 
 ## --- A41 Cells - Plotting and save ---
 ``` {r}
-a41.cells <- read.xlsx(A41_CTS_CSV, rowNames = F) %>%
+a41.cells <- read_csv(file = A41_CTS_CSV) %>%
   dplyr::select(-gene_id, -transcript_ids, -Species, -Name, -Description)
 
 a41.de.data <- a41.cells[!duplicated(a41.cells$Symbol) & !duplicated(a41.cells$Symbol, fromLast = TRUE), ] %>%
-  remove_rownames() |> 
   column_to_rownames(var = "Symbol") %>%
+  select(
+    -"EV-D0-4_FPKM", -"EV-D0-5_FPKM", -"EV-D0-6_FPKM",
+    -"BAT-D0-4_FPKM", -"BAT-D0-5_FPKM", -"BAT-D0-6_FPKM",
+    -"OE-D0-4_FPKM", -"OE-D0-5_FPKM", -"OE-D0-6_FPKM",
+    -"OE-D0-4_FPKM", -"OE-D0-5_FPKM", -"OE-D0-6_FPKM",
+    -"OE-D9-1_FPKM", -"OE-D9-2_FPKM", -"OE-D9-3_FPKM",
+    -"OE-D12-1_FPKM", -"OE-D12-2_FPKM", -"OE-D12-3_FPKM",
+    -"OE-D18-1_FPKM", -"OE-D18-2_FPKM", -"OE-D18-3_FPKM"
+  ) %>%
   as.matrix()
 
 a41.metadata <- data.frame(
