@@ -88,7 +88,7 @@ SHAMSI_RDS <- here("output/4.downstream_pipelines/vision/data/cleaned_datasets_m
 
 ### CIBERSORTx
 CIBERSORT_PROPS_CSV <- here("output/4.downstream_pipelines/cibersort/data/deconvolution_cellular_proportions_table.csv")
-# CIBERSORT_PROPS_CSV <- "~/Downloads/drive-download-20260313T170952Z-3-001/deconvolution_cellular_proportions_table.csv"
+
 
 # GTEx
 GTEX_META_CSV <- here("output/3.heat_signature/5.gtex/data/HEAT_metadata_filtered.csv")
