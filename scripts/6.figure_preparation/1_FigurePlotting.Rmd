@@ -52,7 +52,7 @@ source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
 # -------------------------------------------------------------------------
 SEURAT_FILE <- here(
   "..",
-  "/data/cervical_at_gex_seurat.rds")
+  "data/cervical_at_gex_seurat.rds")
 
 # Raw subject info will be deposited in protected repo
 SUBJECT_INFO_FILE <- here(
@@ -62,12 +62,12 @@ SUBJECT_INFO_FILE <- here(
 
 PROPELLER_PROPORTIONS <- here(
   "..",
-  "/data/figure_1/propeller_cellular_proportions_table.csv"
+  "data/figure_1/propeller_cellular_proportions_table.csv"
 )
 
 PROPELLER_STATS <- here(
   "..",
-  "/data/figure_1/propeller_proportions_stat_table.csv"
+  "data/figure_1/propeller_proportions_stat_table.csv"
 )
 
 # -------------------------------------------------------------------------
