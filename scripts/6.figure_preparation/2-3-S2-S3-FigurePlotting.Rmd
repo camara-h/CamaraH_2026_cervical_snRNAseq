@@ -11,31 +11,29 @@ Plotting of Figures 2 and 3 were combined as they share the VISION scores plotti
 knitr::opts_chunk$set(echo = TRUE)
 
 library(Seurat)
-library(tidyverse)
-library(RColorBrewer)
-library(colorRamp2)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(purrr)
+library(tibble)
 library(ggplot2)
+library(RColorBrewer)
 library(ggpubr)
 library(patchwork)
-library(speckle)
-library(scales)
 library(openxlsx)
 library(ComplexHeatmap)
 library(circlize)
 library(grid)
-library(openxlsx)
 library(ggnewscale)
-library(ggplotify)
 library(ggvenn)
-library(ggpmisc)
-library(VISION)
 library(viridis)
 library(enrichR)
 library(colorspace)
 library(here)
+library(effsize)
+library(pheatmap)
 
-#Conflict solving
-conflicted::conflicts_prefer(pheatmap::pheatmap)
 
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
 source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
@@ -475,7 +473,6 @@ s.object <- readRDS(SEURAT_INPUT)
 
 ## --- Format data ---
 ```{r}
-library(colorspace)
 
 # Load HEAT signature
 load(HEAT_SIGNATURE_RDATA)
@@ -662,12 +659,38 @@ s.object <- readRDS(SEURAT_INPUT)
 ```
 
 # --- Panel 2C. HEAT signature Feature Plot ---
-```{r, fig.width=1.13189, fig.height=1.13189}
+```{r, fig.width=1.13189* scale_factor, fig.height=1.13189* scale_factor}
 mm_to_in(28.75)
 
 scale_factor <- 2
 
-library(ggrastr)
+
+meta_simplified <- s.object@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select(barcode, cell_type_short)
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH", Hallmark == "HEAT") %>%
+  left_join(meta_simplified, by = "barcode")
+
+# Loop over the selected signatures=======
+gg_heat_featplot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigScores)) +
+  geom_point(size = 0.1) +
+  scale_color_viridis_c(option = "viridis", name = "Signature score (VISION)") +
+  theme_nature_metabolism(base_size = 6 * scale_factor) +
+  theme_no_axis() +
+  theme(legend.position = "right") +
+  theme(
+    legend.key.size = unit(1.5 * scale_factor, "mm"),
+    legend.text = element_text(size = 5 * scale_factor),
+    legend.title = element_text(size = 6 * scale_factor)
+  ) +
+  labs(title = "HEAT Signature score")
+
+gg_heat_featplot
+```
+
+```{r, fig.width=1.13189* scale_factor, fig.height=1.13189* scale_factor}
+mm_to_in(28.75)
 
 meta_simplified <- s.object@meta.data %>%
   rownames_to_column("barcode") %>%
@@ -760,6 +783,30 @@ graph.data <- sigscores_df %>%
   filter(dataset == "CamaraH", Hallmark == "UCP1 correlated") %>%
   left_join(meta_simplified, by = "barcode")
 
+# Loop over the selected signatures=======
+gg_ucp1_corr_featplot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigScores)) +
+  geom_point(size = 0.1) +
+  scale_color_viridis_c(option = "viridis", name = "Signature score (VISION)") +
+  theme_nature_metabolism(base_size = 6 * 3) +
+  theme_no_axis() +
+  theme(legend.position = "bottom") +
+  theme(
+    legend.key.size = unit(1.5 * 3, "mm"),
+    legend.text = element_text(size = 4 * 3),
+    legend.title = element_text(size = 5 * 3)
+  ) +
+  labs(title = "UCP1-correlated genes\nSignature score")
+
+gg_ucp1_corr_featplot
+```
+
+
+```{r, fig.width=1.417323*4, fig.height=1.259843*4}
+mm_to_in(c(36, 32))
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH", Hallmark == "UCP1 correlated") %>%
+  left_join(meta_simplified, by = "barcode")
+
 ### Circle the brown adipocyte cluster
 brown <- graph.data %>%
     distinct(barcode, .keep_all = TRUE) |> 
@@ -806,10 +853,6 @@ ggsave(file.path(OUTPUT_DIR, "S2C_ucp1_corr_vision_featplot.pdf"), plot = gg_ucp
 #  Load enriched paths 
 # -----------------------------
 enriched <- readRDS(ENRICHED_RDS)
-```
-
-```{r}
-websiteLive <- getOption("enrichR.live")
 ```
 
 ## --- Set formatting helper functions ---
@@ -883,8 +926,7 @@ add_inside_left_labels <- function(p, term_col = "Term", wrap_width = 25) {
 plot_list <- list()
 base_size <- 6
 
-if (websiteLive) {
-  for (database in dbs) {
+for (database in dbs) {
 
     plot_data <- enriched[[database]] %>%
       mutate(
@@ -912,7 +954,6 @@ if (websiteLive) {
     print(p)
     plot_list[[database]] <- p
   }
-}
 
 ```
 ## --- Plotting and save --- 
@@ -1024,9 +1065,6 @@ ggsave(file.path(OUTPUT_DIR, "2D_vision_adipo_vln.pdf"), plot = gg_vision_adipo_
 # -----------------------------
 #  Calculate effect sizes 
 # -----------------------------
-
-library(dplyr)
-library(effsize)
 
 results_list <- list()
 
@@ -1252,9 +1290,6 @@ pseudobulk_exp_filtered <- pseudobulk_exp |>
 #  Calculate Cohen's d 
 # -----------------------------
 
-library(dplyr)
-library(effsize)
-
 if(!exists("results_list")){
 results_list <- list()
 }
@@ -1392,11 +1427,6 @@ write_csv(heat_positive_pct_per_cell, here(OUTPUT_DIR, "..", "supplemental_table
 
 ## --- Format plot data ---
 ``` {r, fig.width = 7.086614, fig.height = 1.771654, warning = FALSE}
-library(dplyr)
-library(ggplot2)
-library(purrr)
-library(patchwork)
-library(ggpubr)
 
 plot_data_sig_score$dataset <- factor(plot_data_sig_score$dataset,
   levels = c("CamaraH","AngueiraA","SunW","WangT","EfthymiouV","LazarescuO","Emont")
@@ -1526,8 +1556,6 @@ ggsave(file.path(OUTPUT_DIR, "3I-O_heat_vlnplot_alldataset.pdf"), plot = gg_heat
 
 # --- Panel S3D-I. VISION HEAT FeaturePlot in different human snRNAseq ---
 ```{r}
-library(dplyr)
-library(ggplot2)
 
 publication_levels = c("Angueira et al. 2021", "Sun et al. 2020", "Wang et al. 2024","Efthymiou et al. 2025", "Lazarescu et al. 2025","Emont et al. 2022")
 
@@ -1621,7 +1649,6 @@ load(HEAT_SIGNATURE_RDATA) #Creates HEAT_signature
 
 ## --- A38 Cells - Plotting and save ---
 ``` {r fig.height = 2, fig.width = 3.5}
-library(openxlsx)
 a38.cells <- read.xlsx(A38_CTS_CSV, rowNames = F) %>%
   dplyr::select(-1, -transcript_id.s.)
 names(a38.cells) <- gsub("\\.", " ", names(a38.cells))
@@ -1655,7 +1682,7 @@ custom.order <- c("UCP1", sort(HEAT_signature))
 
 pdf(file.path(OUTPUT_DIR,"S3J_A38_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
 
-pheatmap(heatmap[custom.order, , drop = FALSE],
+pheatmap::pheatmap(heatmap[custom.order, , drop = FALSE],
   cluster_cols = FALSE,
   cluster_rows = FALSE,
   cellwidth = 12,
@@ -1685,7 +1712,7 @@ a38.cells |> select(contains("A38")) |> colSums(na.rm = TRUE)
 
 ## --- A41 Cells - Plotting and save ---
 ``` {r}
-a41.cells <- read.xlsx(A41_CTS_CSV, rowNames = FALSE) %>%
+a41.cells <- read.xlsx(A41_CTS_CSV, rowNames = F) %>%
   dplyr::select(-gene_id, -transcript_ids, -Species, -Name, -Description)
 
 a41.de.data <- a41.cells[!duplicated(a41.cells$Symbol) & !duplicated(a41.cells$Symbol, fromLast = TRUE), ] %>%
@@ -1710,7 +1737,7 @@ heatmap <- a41.cells %>%
 custom.order <- c("UCP1", sort(HEAT_signature))
 
 pdf(file.path(OUTPUT_DIR,"S3J_A41_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
-pheatmap(heatmap[custom.order, , drop = FALSE],
+pheatmap::pheatmap(heatmap[custom.order, , drop = FALSE],
   cluster_cols = FALSE,
   cluster_rows = FALSE,
   cellwidth = 12,
@@ -1755,7 +1782,7 @@ heatmap <- cero_mtx
 custom.order <- c("UCP1", sort(HEAT_signature))
 
 pdf(file.path(OUTPUT_DIR,"S3J_cero_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
-pheatmap(heatmap[custom.order, , drop = FALSE],
+pheatmap::pheatmap(heatmap[custom.order, , drop = FALSE],
   cluster_cols = FALSE,
   cluster_rows = FALSE,
   cellwidth = 12,
@@ -1818,7 +1845,7 @@ pal <- brewer.pal(5, "Oranges")
 mm_to_in(c(width, height*2))
 # Filter df to run correlation only in cells expressing UCP1
 df_filt <- ucp1_v_sigscores |> filter(UCP1 > 0)
-pal <- brewer.pal(3, "Oranges")
+
 gg_angueira_correlation <- ggplot() +
   geom_point(
     data = ucp1_v_sigscores,
@@ -2322,7 +2349,7 @@ for(dataset in dataset_names){
   # # --- Plot heatmap ---
   mat <- heatmap[custom.order, , drop = FALSE]
 
-  print(pheatmap(mat,
+  print(pheatmap::pheatmap(mat,
            cluster_cols = FALSE,
            cluster_rows = FALSE,
            cellwidth = 6,
@@ -2345,14 +2372,14 @@ for(dataset in dataset_names){
   #  Print in file 
   # -----------------------------
   
-  print(pheatmap(mat,
+  print(pheatmap::pheatmap(mat,
            cluster_cols = FALSE,
            cluster_rows = FALSE,
            cellwidth = 6,
            cellheight = 5,
            fontsize = 6,
            gaps_row = 1,
-           gaps_col = first_break,
+           gaps_col = 3,
            show_colnames = FALSE,
            legend = TRUE,  
            annotation_legend = FALSE,
