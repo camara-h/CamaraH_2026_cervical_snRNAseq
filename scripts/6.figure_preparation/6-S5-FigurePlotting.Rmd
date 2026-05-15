@@ -29,7 +29,7 @@ library(Signac)
 
 
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
-source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
 
 # --- Resolve conflicts ---
 conflicts_prefer(pheatmap::pheatmap)
@@ -39,42 +39,42 @@ conflicts_prefer(pheatmap::pheatmap)
 ## Inputs
 SEURAT_INPUT <- here(
   "..",
-  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
+  "data/cervical_at_gex_seurat.rds")
 
 DESEQ_STATS_CSV <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_6_S5/deseq2_stats.csv")
+  "data/Figure_6_S5/deseq2_stats.csv")
 
 VISION_OBJECTS_LIST <- list(
   here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_6_S5/CamaraH_Dataset_VISION.rds")
+  "data/Figure_6_S5/CamaraH_Dataset_VISION.rds")
   )
 
 
 # Inputs to update
 HEATMAP_LOG_CPM_RDS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_6_S5/CamaraH_pseudobulk_log_CPM_count_matrix_for_heatmap.rds")
+  "data/Figure_6_S5/CamaraH_pseudobulk_log_CPM_count_matrix_for_heatmap.rds")
 HEATMAP_METADATA_RDS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_6_S5/CamaraH_metadata_for_heatmap.rds")
+  "data/Figure_6_S5/CamaraH_metadata_for_heatmap.rds")
 HEATMAP_CTS_RDS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_6_S5/CamaraH_pseudobulk_count_matrix_for_ggplot.rds")
+  "data/Figure_6_S5/CamaraH_pseudobulk_count_matrix_for_ggplot.rds")
 
 
 
 BULK_DIR <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_6_S5/Cleaned_Datasets")
+  "data/Figure_6_S5/Cleaned_Datasets")
 BULK_META_DIR <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_6_S5/Experimental_Design")
+  "data/Figure_6_S5/Experimental_Design")
 
 MULTIOME_SEURAT_RDS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_6_S5/multiome_seurat.rds")
+  "data/Figure_6_S5/multiome_seurat.rds")
 
 
 # Outputs

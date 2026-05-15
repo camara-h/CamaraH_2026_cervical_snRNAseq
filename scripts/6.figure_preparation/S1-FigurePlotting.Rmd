@@ -36,37 +36,37 @@ theme_no_axis <- function() {
 }
 
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
-source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
 
 
 # --- Setup paths ---
 ## Inputs
 SEURAT_INPUT <- here(
   "..",
-  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
+  "data/cervical_at_gex_seurat.rds")
 
 GAVRILA_TPM <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_S1/TPM_values.csv")
+  "data/Figure_S1/TPM_values.csv")
 DIN_CTS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_S1/Din2018_countmatrix.txt")
+  "data/Figure_S1/Din2018_countmatrix.txt")
 XUE_CTS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_S1/Supplementary_Table_cervical_at_microarray.xlsx")
+  "data/Figure_S1/Supplementary_Table_cervical_at_microarray.xlsx")
 REF_MAP_APSC <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_S1/aspc_combined.rds") 
+  "data/Figure_S1/aspc_combined.rds") 
 REF_MAP_ADIPO <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_S1/adipo_combined.rds") 
+  "data/Figure_S1/adipo_combined.rds") 
 
 PROPELLER_PROPORTIONS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_S1/propeller_cellular_proportions_table.csv" )
+  "data/Figure_S1/propeller_cellular_proportions_table.csv" )
 PROPELLER_STATS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_S1/proportions_stat_table.csv")
+  "data/Figure_S1/proportions_stat_table.csv")
 
 
 # Outputs

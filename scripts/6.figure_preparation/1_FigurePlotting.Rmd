@@ -39,29 +39,29 @@ library(openxlsx)
 library(grid)
 
 # Shared plotting functions and manuscript palettes
-source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
 
 # -------------------------------------------------------------------------
 # Define inputs
 # -------------------------------------------------------------------------
 SEURAT_FILE <- here(
   "..",
-  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
+  "data/cervical_at_gex_seurat.rds")
 
 # Raw subject info will be deposited in protected repo
 SUBJECT_INFO_FILE <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_1/2023-09-14_SubjectInformationTable.xlsx"
+  "data/Figure_1/2023-09-14_SubjectInformationTable.xlsx"
 )
 
 PROPELLER_PROPORTIONS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_1/propeller_cellular_proportions_table.csv"
+  "data/Figure_1/propeller_cellular_proportions_table.csv"
 )
 
 PROPELLER_STATS <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_1/propeller_proportions_stat_table.csv"
+  "data/Figure_1/propeller_proportions_stat_table.csv"
 )
 
 # -------------------------------------------------------------------------

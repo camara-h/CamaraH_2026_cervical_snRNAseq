@@ -64,29 +64,29 @@ cell_type_mapping <- c(
 )
 
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
-source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
 
 # --- Setup paths ---
 
 ## Inputs
 SEURAT_INPUT <- here(
   "..",
-  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
+  "data/cervical_at_gex_seurat.rds")
 
 CELLCHAT_DEEP <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_5_S4/cellchat_deep_pop.size.false_cell_type_short.rds")
+  "data/Figure_5_S4/cellchat_deep_pop.size.false_cell_type_short.rds")
 CELLCHAT_SUPERFICIAL <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_5_S4/cellchat_superficial_pop.size.false_cell_type_short.rds")
+  "data/Figure_5_S4/cellchat_superficial_pop.size.false_cell_type_short.rds")
 CELLCHAT_MERGED <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_5_S4/cellchat_merged_pop.size.false_cell_type_short.rds")
+  "data/Figure_5_S4/cellchat_merged_pop.size.false_cell_type_short.rds")
 
 
 MEBOCOST_COMM_CSV <- here(
   "..",
-  "NeckAdipose/ocean_code_data/Figure_5_S4/communication_result_multi.csv")
+  "data/Figure_5_S4/communication_result_multi.csv")
 
 # Outputs
 OUTPUT_DIR <- here("..", "results", "Figure_5_S4")
