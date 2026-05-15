@@ -2400,9 +2400,6 @@ for (dataset in unique(combined_data_with_meta$Dataset)) {
 
   # Generate the plot
   p <- ggplot(plot_data, aes(x = Depot, y = Proportions, fill = Depot)) +
-    # In case you want barplot + sem
-    #    stat_summary(geom = "col", fun = "mean", aes(fill = Depot, color = Depot),  alpha = 0.5, width = 0.5, linewidth = 0.3) +
-    # stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.15, linewidth = 0.3, aes(color = Depot)) +
 
     # In case you want boxplot
     geom_boxplot(alpha = 0.4, outlier.shape = NA, color = "black", width = 0.4, linewidth = 0.3) +
