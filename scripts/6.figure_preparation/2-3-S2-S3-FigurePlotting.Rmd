@@ -2400,8 +2400,6 @@ for(dataset in dataset_names){
 ```{r}
 # Load output from X.02.X.CIBERSORTx
 combined_data_with_meta <- read.csv(CIBERSORT_PROPS_CSV)
-
-combined_data_with_meta |> filter(Cell_type == "Brown_adipocyte") |>  distinct(Mixture,Dataset, .keep_all = T) |> count(Dataset)
 ```
 
 ## --- Create plots ---
@@ -2430,11 +2428,6 @@ for (dataset in unique(combined_data_with_meta$Dataset)) {
 
   # Generate the plot
   p <- ggplot(plot_data, aes(x = Depot, y = Proportions, fill = Depot)) +
-    # In case you want barplot + sem
-    #    stat_summary(geom = "col", fun = "mean", aes(fill = Depot, color = Depot),  alpha = 0.5, width = 0.5, linewidth = 0.3) +
-    # stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.15, linewidth = 0.3, aes(color = Depot)) +
-
-    # In case you want boxplot
     geom_boxplot(alpha = 0.4, outlier.shape = NA, color = "black", width = 0.4, linewidth = 0.3) +
     geom_jitter(position = position_jitterdodge(jitter.width = 0), size = 0.5, shape = 21, color = "black", stroke = 0.3) + # Jittered points
     theme_classic() +
