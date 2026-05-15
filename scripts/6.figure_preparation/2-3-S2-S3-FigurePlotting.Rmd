@@ -613,7 +613,33 @@ mm_to_in(28.75)
 
 scale_factor <- 2
 
-library(ggrastr)
+
+meta_simplified <- s.object@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select(barcode, cell_type_short)
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH", Hallmark == "HEAT") %>%
+  left_join(meta_simplified, by = "barcode")
+
+# Loop over the selected signatures=======
+gg_heat_featplot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigScores)) +
+  geom_point(size = 0.1) +
+  scale_color_viridis_c(option = "viridis", name = "Signature score (VISION)") +
+  theme_nature_metabolism(base_size = 6 * scale_factor) +
+  theme_no_axis() +
+  theme(legend.position = "right") +
+  theme(
+    legend.key.size = unit(1.5 * scale_factor, "mm"),
+    legend.text = element_text(size = 5 * scale_factor),
+    legend.title = element_text(size = 6 * scale_factor)
+  ) +
+  labs(title = "HEAT Signature score")
+
+gg_heat_featplot
+```
+
+```{r, fig.width=1.13189* scale_factor, fig.height=1.13189* scale_factor}
+mm_to_in(28.75)
 
 meta_simplified <- s.object@meta.data %>%
   rownames_to_column("barcode") %>%
@@ -706,6 +732,30 @@ graph.data <- sigscores_df %>%
   filter(dataset == "CamaraH", Hallmark == "UCP1 correlated") %>%
   left_join(meta_simplified, by = "barcode")
 
+# Loop over the selected signatures=======
+gg_ucp1_corr_featplot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigScores)) +
+  geom_point(size = 0.1) +
+  scale_color_viridis_c(option = "viridis", name = "Signature score (VISION)") +
+  theme_nature_metabolism(base_size = 6 * 3) +
+  theme_no_axis() +
+  theme(legend.position = "bottom") +
+  theme(
+    legend.key.size = unit(1.5 * 3, "mm"),
+    legend.text = element_text(size = 4 * 3),
+    legend.title = element_text(size = 5 * 3)
+  ) +
+  labs(title = "UCP1-correlated genes\nSignature score")
+
+gg_ucp1_corr_featplot
+```
+
+
+```{r, fig.width=1.417323*4, fig.height=1.259843*4}
+mm_to_in(c(36, 32))
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH", Hallmark == "UCP1 correlated") %>%
+  left_join(meta_simplified, by = "barcode")
+
 ### Circle the brown adipocyte cluster
 brown <- graph.data %>%
     distinct(barcode, .keep_all = TRUE) |> 
@@ -752,10 +802,6 @@ ggsave(file.path(OUTPUT_DIR, "S2C_ucp1_corr_vision_featplot.pdf"), plot = gg_ucp
 #  Load enriched paths 
 # -----------------------------
 enriched <- readRDS(ENRICHED_RDS)
-```
-
-```{r}
-websiteLive <- getOption("enrichR.live")
 ```
 
 ## --- Set formatting helper functions ---
@@ -829,8 +875,7 @@ add_inside_left_labels <- function(p, term_col = "Term", wrap_width = 25) {
 plot_list <- list()
 base_size <- 6
 
-if (websiteLive) {
-  for (database in dbs) {
+for (database in dbs) {
 
     plot_data <- enriched[[database]] %>%
       mutate(
@@ -858,7 +903,6 @@ if (websiteLive) {
     print(p)
     plot_list[[database]] <- p
   }
-}
 
 ```
 ## --- Plotting and save --- 
@@ -1772,7 +1816,7 @@ pal <- brewer.pal(5, "Oranges")
 mm_to_in(c(width, height*2))
 # Filter df to run correlation only in cells expressing UCP1
 df_filt <- ucp1_v_sigscores |> filter(UCP1 > 0)
-pal <- brewer.pal(3, "Oranges")
+
 gg_angueira_correlation <- ggplot() +
   geom_point(
     data = ucp1_v_sigscores,
@@ -2306,7 +2350,7 @@ for(dataset in dataset_names){
            cellheight = 5,
            fontsize = 6,
            gaps_row = 1,
-           gaps_col = first_break,
+           gaps_col = 3,
            show_colnames = FALSE,
            legend = TRUE,  
            annotation_legend = FALSE,
