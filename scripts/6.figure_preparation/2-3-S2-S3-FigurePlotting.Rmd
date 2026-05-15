@@ -7,7 +7,6 @@ date: "2025-01-14"
 Plotting of Figures 2 and 3 were combined as they share the VISION scores plotting for most part of it
 
 # --- Setup ---
-# --- Setup ---
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -39,115 +38,117 @@ library(here)
 conflicted::conflicts_prefer(pheatmap::pheatmap)
 
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
-source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
+source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
 
 # --- Setup paths ---
 ## Inputs
 ### Seurat input
 SEURAT_INPUT <- here(
   "..",
-  "/data/cervical_at_gex_seurat.rds")
+  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
+
+SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
 
 ### HEAT signature generation
 HEAT_SIGNATURE_RDATA <- here(
   "..",
-  "data/figure_2_3_S2_S3/heat_signature.Rdata")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/heat_signature.Rdata")
 LYNES_MICROARRAY_CTS <- here(
   "..",
-  "data/figure_2_3_S2_S3/Supplementary_Table_cervical_at_microarray.xlsx")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/Supplementary_Table_cervical_at_microarray.xlsx")
 LYNES_CORRELATION_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/Lynes_et_al_correlation.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/Lynes_et_al_correlation.csv")
 SALEJ_BULK_CTS <- here(
   "..",
-  "data/figure_2_3_S2_S3/logCPM_for_correlations.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/logCPM_for_correlations.csv")
 SALEJ_CORRELATION_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/Salej_et_al_logCPM_correlation.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/Salej_et_al_logCPM_correlation.csv")
 HEAT_VENN_RDATA <- here(
   "..",
-  "data/figure_2_3_S2_S3/genes_for_venn.Rdata")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/genes_for_venn.Rdata")
 HEAT_SIGNATURE_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/heat_signature.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/heat_signature.csv")
 
 
 # HEAT Enrichr
 ENRICHED_RDS <- here(
   "..",
-  "data/figure_2_3_S2_S3/enriched_heat.rds")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/enriched_heat.rds")
 
 # HEAT threshold
 HEAT_THRESHOLD_RDS <- here(
   "..",
-  "data/figure_2_3_S2_S3/wad_heat_threshold.rds")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/wad_heat_threshold.rds")
 
 
 # BULK RNAseq
 GSEA_HEAT_BULK_DIR <- here(
   "..",
-  "data/figure_2_3_S2_S3/ssGSEA")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/ssGSEA")
 
 PARAGANG_BULK_MTX_RDS <- here(
   "..",
-  "data/figure_2_3_S2_S3/GSE49795_Sondergaard_expression_matrix.rds") 
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/GSE49795_Sondergaard_expression_matrix.rds") 
 BULK_DIR <- here(
   "..",
-  "data/figure_2_3_S2_S3/Cleaned_Datasets")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/Cleaned_Datasets")
 BULK_META_DIR <- here(
   "..",
-  "data/figure_2_3_S2_S3/Experimental_Design")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/Experimental_Design")
 
 A41_CTS_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/camaraH_a41_d18_fpkm.xlsx")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/camaraH_a41_d18_fpkm.xlsx")
 A38_CTS_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/camaraH_a38_d18_tpm.xlsx")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/camaraH_a38_d18_tpm.xlsx")
 CERO_CTS_XLSX <- here(
   "..",
-  "data/figure_2_3_S2_S3/RNA-seq data set Cero et al.xlsx")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/RNA-seq data set Cero et al.xlsx")
 
 
 # VISION
 VISION_SIG_DIR <- here(
   "..",
-  "data/figure_2_3_S2_S3/vision_signature_scores")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/vision_signature_scores")
 
 # Angueira dataset
 ANGUEIRA_ADIPO_SUB_RDS <- here(
   "..",
-  "data/figure_2_3_S2_S3/AngueiraA_Dataset_adipo_recluster.rds")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/AngueiraA_Dataset_adipo_recluster.rds")
 
 ANGUEIRA_HEATvUCP1_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/Angueira_HEATvUCP1.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/Angueira_HEATvUCP1.csv")
 
 # Mouse datasets
 ## Shamsi 2021
 SHAMSI_VISON_SIG <- file.path(VISION_SIG_DIR, "ShamsiF_Dataset_VISION_sigScore.csv")
 SHAMSI_RDS <- here(
   "..",
-  "data/figure_2_3_S2_S3/ShamsiF_Dataset.rds")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/ShamsiF_Dataset.rds")
 
 ### CIBERSORTx
 CIBERSORT_PROPS_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/deconvolution_cellular_proportions_table.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/deconvolution_cellular_proportions_table.csv")
 
 # GTEx
 GTEX_META_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/gtex_metadata_filtered.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/gtex_metadata_filtered.csv")
 GTEX_AOV_STATS_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/stratified_aov_statistics.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/stratified_aov_statistics.csv")
 GTEX_AOV_STATS_SIGNIF_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/significant_stratified_aov.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/significant_stratified_aov.csv")
 GTEX_META_ANNOT_CSV <- here(
   "..",
-  "data/figure_2_3_S2_S3/gtex_dictionary_filtered.csv")
+  "NeckAdipose/ocean_code_data/figure_2_3_S2_S3/gtex_dictionary_filtered.csv")
 
 # Outputs
 OUTPUT_DIR <- here("..", "results", "Figure_2_3_S2_S3")
@@ -661,7 +662,7 @@ s.object <- readRDS(SEURAT_INPUT)
 ```
 
 # --- Panel 2C. HEAT signature Feature Plot ---
-```{r, fig.width=1.13189* scale_factor, fig.height=1.13189* scale_factor}
+```{r, fig.width=1.13189, fig.height=1.13189}
 mm_to_in(28.75)
 
 scale_factor <- 2
