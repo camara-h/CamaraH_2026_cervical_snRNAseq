@@ -9,12 +9,20 @@ date: "2025-01-14"
 library(Seurat)
 library(ggplot2)
 library(ggpubr)
-library(tidyverse)
+
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(forcats)
+library(tibble)
+
 library(openxlsx)
-library(RColorBrewer)
 library(speckle)
 library(ggnewscale)
 library(patchwork)
+library(here)
+library(grid)
 
 
 
@@ -30,22 +38,39 @@ theme_no_axis <- function() {
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
 source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
 
+
 # --- Setup paths ---
 ## Inputs
-SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
+SEURAT_INPUT <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
 
-GAVRILA_TPM <- here("../Internal_Datasets/Gavrila Lab Bulk RNAseq Data/TPM_values.csv")
-DIN_CTS <- here("data/5.published_datasets/Public_BulkRNAseq/Din 2018/Din2018_countmatrix.txt")
-XUE_CTS <- here("data/6.internal_datasets/Tseng_Datasets/Ruidan Xue's Microarray data/20 arrays for hBAT hWAT tissues/Supplementary_Table_cervical_at_microarray.xlsx")
-REF_MAP_APSC <- here("../Output/1 - Figure and Analysis/36.ReferenceMapping/aspc_combined.rds") #UPDATE THIS
-REF_MAP_ADIPO <- here("../Output/1 - Figure and Analysis/36.ReferenceMapping/adipo_combined.rds") # UPDATE THIS
+GAVRILA_TPM <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_S1/TPM_values.csv")
+DIN_CTS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_S1/Din2018_countmatrix.txt")
+XUE_CTS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_S1/Supplementary_Table_cervical_at_microarray.xlsx")
+REF_MAP_APSC <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_S1/aspc_combined.rds") 
+REF_MAP_ADIPO <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_S1/adipo_combined.rds") 
 
-PROPELLER_PROPORTIONS <- here("output/2.sobject_characterization/propeller/data/propeller_cellular_proportions_table.csv" )
-PROPELLER_STATS <- here("output", "2.sobject_characterization", "propeller", "data", "proportions_stat_table.csv")
+PROPELLER_PROPORTIONS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_S1/propeller_cellular_proportions_table.csv" )
+PROPELLER_STATS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_S1/proportions_stat_table.csv")
 
 
 # Outputs
-OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_Supp_1")
+OUTPUT_DIR <- here("..", "results", "Figure_Supp_1")
 
 dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
 ```

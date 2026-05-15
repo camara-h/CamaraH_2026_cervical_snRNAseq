@@ -31,43 +31,37 @@ knitr::opts_chunk$set(echo = TRUE)
 library(Seurat)
 library(ggplot2)
 library(dplyr)
-library(tidyr)
 library(readr)
-library(purrr)
-library(tibble)
-library(stringr)
-library(forcats)
 library(ggpubr)
 library(patchwork)
-library(speckle)
-# library(ggnewscale)
 library(here)
 library(openxlsx)
+library(grid)
 
 # Shared plotting functions and manuscript palettes
-source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
+source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
 
 # -------------------------------------------------------------------------
 # Define inputs
 # -------------------------------------------------------------------------
 SEURAT_FILE <- here(
   "..",
-  "data/cervical_at_gex_seurat.rds")
+  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
 
 # Raw subject info will be deposited in protected repo
 SUBJECT_INFO_FILE <- here(
-  "data",
-  "2023-09-14_SubjectInformationTable.xlsx"
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_1/2023-09-14_SubjectInformationTable.xlsx"
 )
 
 PROPELLER_PROPORTIONS <- here(
   "..",
-  "data/figure_1/propeller_cellular_proportions_table.csv"
+  "NeckAdipose/ocean_code_data/Figure_1/propeller_cellular_proportions_table.csv"
 )
 
 PROPELLER_STATS <- here(
   "..",
-  "data/figure_1/propeller_proportions_stat_table.csv"
+  "NeckAdipose/ocean_code_data/Figure_1/propeller_proportions_stat_table.csv"
 )
 
 # -------------------------------------------------------------------------
@@ -92,16 +86,16 @@ s.object <- readRDS(SEURAT_FILE)
 
 This chunk loads the subject information table used for the demographic
 summary associated with Figure 1.
-
+Protected data will be submitted to dbGaP. Thus chunk is commented out
 ```{r}
-subject_info <- openxlsx::read.xlsx(
-  SUBJECT_INFO_FILE,
-  sheet = "Labs",
-  rows = 1:19
-)
-
-subject_info
-summary(subject_info)
+# subject_info <- openxlsx::read.xlsx(
+#   SUBJECT_INFO_FILE,
+#   sheet = "Labs",
+#   rows = 1:19
+# )
+# 
+# subject_info
+# summary(subject_info)
 ```
 
 # --- Panel 1D. UMAP plot ---

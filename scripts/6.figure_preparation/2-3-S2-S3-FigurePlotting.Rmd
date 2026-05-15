@@ -45,7 +45,6 @@ SEURAT_INPUT <- here(
   "..",
   "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
 
-SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
 
 ### HEAT signature generation
 HEAT_SIGNATURE_RDATA <- here(
@@ -2401,6 +2400,8 @@ for(dataset in dataset_names){
 ```{r}
 # Load output from X.02.X.CIBERSORTx
 combined_data_with_meta <- read.csv(CIBERSORT_PROPS_CSV)
+
+combined_data_with_meta |> filter(Cell_type == "Brown_adipocyte") |>  distinct(Mixture,Dataset, .keep_all = T) |> count(Dataset)
 ```
 
 ## --- Create plots ---

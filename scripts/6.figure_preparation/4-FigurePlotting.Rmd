@@ -68,18 +68,29 @@ source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
 # --- Setup paths ---
 
 ## Inputs
-DESEQ_STATS_CSV <- here("output/4.downstream_pipelines/de_analysis/data/deseq2_stats.csv")
-GSEA_HALLMARK <- here("output/4.downstream_pipelines/de_analysis/data//HallMark_GSEA.csv")
-GSEA_GO <- here("output/4.downstream_pipelines/de_analysis/data//GO_GSEA.csv")
-GSEA_REACTOME <- here("output/4.downstream_pipelines/de_analysis/data//Reactome_GSEA.csv")
+SEURAT_INPUT <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
 
-SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
+DESEQ_STATS_CSV <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_4/deseq2_stats.csv")
+GSEA_HALLMARK <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_4/HallMark_GSEA.csv")
+GSEA_GO <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_4/GO_GSEA.csv")
+GSEA_REACTOME <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_4/Reactome_GSEA.csv")
 
-# Inputs to update
-HEATMAP_INPUT_RDS <- here("output/4.downstream_pipelines/de_analysis/data/heatmap_input.rds")
+HEATMAP_INPUT_RDS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_4/heatmap_input.rds")
 
 # Outputs
-OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_4")
+OUTPUT_DIR <- here("..", "results", "Figure_4")
 
 dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
 ```
