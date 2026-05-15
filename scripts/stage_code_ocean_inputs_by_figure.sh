@@ -325,9 +325,14 @@ stage_dir_to "$FIG_6_S5" \
 
 stage_dir_to "$FIG_6_S5" \
   "output/3.heat_signature/3.public_bulkrnaseq/data/Experimental_Design"
+  
+stage_dir_to "$FIG_6_S5" \
+  "data_onedrive/velocyto_results"
 
 stage_file_to "$FIG_6_S5" \
-  "data_onedrive/9.multiome_data/multiome_seurat.rds"
+  "data_onedrive/9.multiome_data/integrated_seurat.rds"
+
+mv "$FIG_6_S5/integrated_seurat.rds" "$FIG_6_S5/multiome_seurat.rds"
 
 # ============================================================
 # Manifests and final summary

@@ -25,6 +25,8 @@ library(readr)
 library(viridis)
 library(tidyverse)
 library(patchwork)
+library(Signac)
+
 
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
 source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
@@ -35,28 +37,48 @@ conflicts_prefer(pheatmap::pheatmap)
 
 # --- Setup paths ---
 ## Inputs
-DESEQ_STATS_CSV <- here("output/4.downstream_pipelines/de_analysis/data/deseq2_stats.csv")
-SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
+SEURAT_INPUT <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
+
+DESEQ_STATS_CSV <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/deseq2_stats.csv")
+
 VISION_OBJECTS_LIST <- list(
-  here("output/4.downstream_pipelines/vision/data/vision_objects/CamaraH_Dataset_VISION.rds")
+  here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/CamaraH_Dataset_VISION.rds")
   )
 
 
 # Inputs to update
-HEATMAP_LOG_CPM_RDS <- here("output/4.downstream_pipelines/de_analysis/data/CamaraH_pseudobulk_log_CPM_count_matrix_for_heatmap.rds")
-HEATMAP_METADATA_RDS <- here("output/4.downstream_pipelines/de_analysis/data/CamaraH_metadata_for_heatmap.rds")
-HEATMAP_CTS_RDS <- here("output/4.downstream_pipelines/de_analysis/data/CamaraH_pseudobulk_count_matrix_for_ggplot.rds")
+HEATMAP_LOG_CPM_RDS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/CamaraH_pseudobulk_log_CPM_count_matrix_for_heatmap.rds")
+HEATMAP_METADATA_RDS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/CamaraH_metadata_for_heatmap.rds")
+HEATMAP_CTS_RDS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/CamaraH_pseudobulk_count_matrix_for_ggplot.rds")
 
 
 
-BULK_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/data/Cleaned_Datasets")
-BULK_META_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/data/Experimental_Design")
+BULK_DIR <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/Cleaned_Datasets")
+BULK_META_DIR <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/Experimental_Design")
 
-MULTIOME_SEURAT_RDS <- here("data_onedrive/9.multiome_data/multiome_seurat.rds")
+MULTIOME_SEURAT_RDS <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/multiome_seurat.rds")
 
 
 # Outputs
-OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_6_S5")
+OUTPUT_DIR <- here("..", "results", "Figure_6_S5")
 
 dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
 ```
@@ -232,7 +254,7 @@ cell_type_of_interest <-  c("Endothelial", "Smooth")
 
   
   
-    pdf(file.path(OUTPUT_DIR,paste0("S4E_heatmap_hox_endo_smc_aspcs.pdf")), width = mm_to_in(180), height = mm_to_in(35))
+    pdf(file.path(OUTPUT_DIR,paste0("S5D_heatmap_hox_endo_smc_aspcs.pdf")), width = mm_to_in(180), height = mm_to_in(35))
     pheatmap::pheatmap(
     mat = hm_data,
     annotation_col = annotation_col,
@@ -364,13 +386,7 @@ mm_to_in(c(55, 64))
   gg_volcano   
   
   # Save as png
-ggsave(file.path(OUTPUT_DIR, "4D_volcano_white_adipocyte_hox.pdf"), gg_volcano, width = 55, height = 64, units = "mm", bg = "white",  dpi = 600)
-
-  # Save as pdf
-  output_file <- paste0("4D_volcano_white_adipocyte_hox.pdf")
-  pdf(file.path(OUTPUT_DIR, "4D_volcano_white_adipocyte_hox.pdf"), width = mm_to_in(55), height = mm_to_in(64))
-  gg_volcano
-  dev.off()
+ggsave(file.path(OUTPUT_DIR, "6D_volcano_white_adipocyte_hox.pdf"), gg_volcano, width = 55, height = 64, units = "mm", bg = "white",  dpi = 600)
 ```
 # --- Panels 6A-F, S5A. Pseudobulk Gene Expression per subject/cell_type pair ---
 ## --- Load Pseudobulk expression table for ggplot (long format) --- 
@@ -702,7 +718,7 @@ gg_sup_a <- ggplot(graph.data.filter |>
 
 hallmark_umap_plot_list[[hallmark]] <- gg_sup_a
 
-ggsave(file.path(OUTPUT_DIR,paste0("S6B_vision_umapplot_", hallmark, ".pdf")), gg_sup_a, width = 60 * scale_factor, height = 20 * scale_factor, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR,paste0("S5B_vision_umapplot_", hallmark, ".pdf")), gg_sup_a, width = 60 * scale_factor, height = 20 * scale_factor, units = "mm", bg = "white",  dpi = 600)
 }
 
 hallmark_umap_plot_list
@@ -862,7 +878,7 @@ cleaned_files <- grep("_Cleaned", exp_files, value = TRUE)
 meta_files <- list.files(BULK_META_DIR, full.names = TRUE)
 
 #Define dataset names
-dataset_names <-  str_remove(basename(cleaned_files), "_Cleaned.csv")
+dataset_names <-  c("Gavrila", "Din")
 
 
 for(dataset in dataset_names){
@@ -918,7 +934,7 @@ for(dataset in dataset_names){
   annotation_colors$group <- annotation_colors$group[names(annotation_colors$group) %in% meta$group]
   
   custom.order <- c("PAX3", "HOXD3", "HOXD4", "IRX2", "IRX5", "HOXA3", "HOXA4", "HOXA5", "HOXA6")
-  pdf(file.path(OUTPUT_DIR, paste("S4E", dataset, "hox_heatmap.pdf", sep= "_")), width = mm_to_in(180), height = mm_to_in(60))
+  pdf(file.path(OUTPUT_DIR, paste("S5E", dataset, "hox_heatmap.pdf", sep= "_")), width = mm_to_in(180), height = mm_to_in(60))
   # # --- Plot heatmap ---
   mat <- heatmap[custom.order, , drop = FALSE]
 
@@ -944,7 +960,6 @@ for(dataset in dataset_names){
 # --- Panel 6G,H. Chromatin Accessibility  ---
 ## --- Load signac file ---
 ```{r}
-library(Signac)
 query_obj <- readRDS(MULTIOME_SEURAT_RDS)
 ```
 
@@ -983,44 +998,48 @@ neck_region_from_ident <- sub("^.*_", "", id_levels)
 ident_colors <- setNames(neck.color[neck_region_from_ident], id_levels)
 ident_colors
 
-for (goi in features){
+##  Indexing file is access controlled and will be uploaded in dbGaP
+## plotting chunk is thus commented out
 
-  scale_factor <- 2
+# for (goi in features){
+# 
+#   scale_factor <- 2
+# 
+# # plot only the WAds-derived identity groups
+# 
+#   p <- CoveragePlot(
+#     query_obj,
+#     region = goi,
+#     features = goi,
+#     assay = "peaks",
+#     expression.assay = "SCT",
+#     peaks = TRUE,
+#     idents = idents_to_plot
+#   ) &
+#     scale_fill_manual(values = ident_colors) &
+#     theme(
+#       text = element_text(size = 5 * scale_factor),
+#       axis.title = element_text(size = 5 * scale_factor),
+#       axis.text = element_text(size = 5 * scale_factor),
+#       strip.text = element_text(size = 5 * scale_factor),
+#       legend.title = element_text(size = 5 * scale_factor),
+#       legend.text = element_text(size = 5 * scale_factor),
+#       axis.line = element_line(linewidth = 0.3 * scale_factor),
+#       axis.ticks = element_line(linewidth = 0.3 * scale_factor),
+#       # panel.border = element_rect(fill = NA, linewidth = 0.3 * scale_factor)
+#     )
+# 
+# ggsave(
+#   filename = file.path(OUTPUT_DIR, paste0("6G-H_coverage_", goi, "_", idents_query,"_by_neck.region.pdf")),
+#   plot = p,
+#   width = 65 * scale_factor,
+#   height = 50 * scale_factor,
+#   units = "mm",
+#   bg = "white"
+# )
+# 
+# }
 
-# plot only the WAds-derived identity groups
-
-  p <- CoveragePlot(
-    query_obj,
-    region = goi,
-    features = goi,
-    assay = "peaks",
-    expression.assay = "SCT",
-    peaks = TRUE,
-    idents = idents_to_plot
-  ) &
-    scale_fill_manual(values = ident_colors) &
-    theme(
-      text = element_text(size = 5 * scale_factor),
-      axis.title = element_text(size = 5 * scale_factor),
-      axis.text = element_text(size = 5 * scale_factor),
-      strip.text = element_text(size = 5 * scale_factor),
-      legend.title = element_text(size = 5 * scale_factor),
-      legend.text = element_text(size = 5 * scale_factor),
-      axis.line = element_line(linewidth = 0.3 * scale_factor),
-      axis.ticks = element_line(linewidth = 0.3 * scale_factor),
-      # panel.border = element_rect(fill = NA, linewidth = 0.3 * scale_factor)
-    )
-
-ggsave(
-  filename = file.path(OUTPUT_DIR, paste0("6G-H_coverage_", goi, "_", idents_query,"_by_neck.region.pdf")),
-  plot = p,
-  width = 65 * scale_factor,
-  height = 50 * scale_factor,
-  units = "mm",
-  bg = "white"
-)
-
-}
 # restore original identities afterward
 Idents(query_obj) <- old_idents
 ```

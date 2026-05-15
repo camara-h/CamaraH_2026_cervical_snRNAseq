@@ -69,16 +69,27 @@ source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))
 # --- Setup paths ---
 
 ## Inputs
-CELLCHAT_DEEP <- here("output/4.downstream_pipelines/cellchat/data/cellchat_deep_pop.size.false_cell_type_short.rds")
-CELLCHAT_SUPERFICIAL <- here("output/4.downstream_pipelines/cellchat/data/cellchat_superficial_pop.size.false_cell_type_short.rds")
-CELLCHAT_MERGED <- here("output/4.downstream_pipelines/cellchat/data/cellchat_merged_pop.size.false_cell_type_short.rds")
+SEURAT_INPUT <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/cervical_at_gex_seurat.rds")
 
-SEURAT_INPUT <- here("data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds")
+CELLCHAT_DEEP <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_5_S4/cellchat_deep_pop.size.false_cell_type_short.rds")
+CELLCHAT_SUPERFICIAL <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_5_S4/cellchat_superficial_pop.size.false_cell_type_short.rds")
+CELLCHAT_MERGED <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_5_S4/cellchat_merged_pop.size.false_cell_type_short.rds")
 
-MEBOCOST_COMM_CSV <- here("output/4.downstream_pipelines/mebocost/data/communication_result_multi.csv")
+
+MEBOCOST_COMM_CSV <- here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_5_S4/communication_result_multi.csv")
 
 # Outputs
-OUTPUT_DIR <- here("output", "6.figure_preparation", "Figure_5_S4")
+OUTPUT_DIR <- here("..", "results", "Figure_5_S4")
 
 dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
 ```
@@ -497,7 +508,7 @@ for (n in seq_len(length(id_maps))) {
     )
   }
 
-
+  if (pathways.show %in% c("COLLAGEN", "BMP")) {
   file_name <- paste0("5", id_maps$main_fig_id[n], "_cellchat_", tolower(pathways.show), "_circleplot.pdf")
 
   # Adjust dimension per plot
@@ -528,7 +539,8 @@ for (n in seq_len(length(id_maps))) {
   }
 
   dev.off()
-
+  }
+  
   if (pathways.show %in% c("COLLAGEN", "CD99")) {
     file_name <- paste0("S4", id_maps$supp_fig_id[n], "_cellchat_", tolower(pathways.show), "_WAd_as_target_circleplot.pdf")
     plot.width <- 50
