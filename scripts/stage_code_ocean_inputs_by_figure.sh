@@ -135,6 +135,16 @@ echo "Skip existing files/folders: $SKIP_EXISTING"
 echo
 
 # ============================================================
+# Seurat GEX
+# ============================================================
+
+stage_file_to "$ROOT_DEST" \
+  "data/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds"
+
+#Rename  
+mv "$ROOT_DEST/adata_integrated_soupXoutput_with_infer_forR_temp_Dec18_cleaned.rds" "$ROOT_DEST/cervical_at_gex_seurat.rds"
+
+# ============================================================
 # Figure 2, Figure 3, Figure S2, Figure S3
 # ============================================================
 
