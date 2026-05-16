@@ -563,8 +563,6 @@ c <- ggplot(total, aes(x = normalized_sample * 100, y = Normalized, color = data
 ```
 
 ```{r}
-library(dplyr)
-
 total_counts <- total |>
   mutate(
     NS_group = case_when(

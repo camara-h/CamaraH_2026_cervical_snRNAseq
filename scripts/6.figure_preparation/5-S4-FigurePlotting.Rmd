@@ -32,6 +32,8 @@ library(igraph)
 library(ggraph)
 library(tidygraph)
 library(ggnewscale)
+library(ggrepel)
+
 
 conflicts_prefer(ggplot2::annotate)
 conflicts_prefer(base::unname)
@@ -241,7 +243,6 @@ ggsave(file.path(OUTPUT_DIR, paste0("S4G_communication_flow_to_wads_", "Cell-Cel
 # --- Panels 5C,E and S4A. 2D communication plot ---
 ## --- Create plots ---
 ```{r, warning=FALSE}
-library(ggrepel)
 # I have confirmed that the interaction strength is simply the sum of the communication probability within all the significant pathwys
 # We can thus create our own plot
 

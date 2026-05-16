@@ -26,6 +26,8 @@ library(viridis)
 library(tidyverse)
 library(patchwork)
 library(Signac)
+library(ggrepel)
+
 
 
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
@@ -308,7 +310,6 @@ pseudobulk_deseq_dge %>% distinct(cell_type)
 
 ## --- Loop and create plots  ---
 ```{r}
-library(ggrepel)
 
 plot_list <-  list()
 for(filter_cell in c("Adipocyte Progenitor Cell", "White Adipocytes")){

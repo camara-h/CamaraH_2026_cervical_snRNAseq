@@ -31,6 +31,8 @@ library(igraph)
 library(ggraph)
 library(tidygraph)
 library(ggnewscale)
+library(ggrepel)
+
 
 conflicts_prefer(ggplot2::annotate)
 conflicts_prefer(base::unname)
@@ -166,7 +168,6 @@ final_DE_filt %>%
 ```
 ## --- Set up helper function ---
 ```{r}
-library(ggrepel)
 
 PlotVolcano <- function(de_table, cluster, cont.1 = "Deep", cont.2 = "Superficial",
                         fc_cutoff = 1.5, p_cutoff = 0.05, show_genes = NULL,
