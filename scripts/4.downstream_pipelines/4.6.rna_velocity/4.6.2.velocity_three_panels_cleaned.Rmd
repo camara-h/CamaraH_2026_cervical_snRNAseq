@@ -65,20 +65,22 @@ import os
 import anndata as ad
 
 # Path containing the .loom files (edit to your local path)
-data_path = "path/to/velocyto_results"
+DATA_PATH = here(
+  "..",
+  "NeckAdipose/ocean_code_data/Figure_6_S5/velocyto_results")
 
 # Directory where ALL new outputs will be saved (edit to your local path)
-out_dir = r"path/to/velocyto_results_output"
-os.makedirs(out_dir, exist_ok=True)
+OUT_PATH = r"path/to/velocyto_results_output"
+os.makedirs(OUT_PATH, exist_ok=True)
 
 # Auxiliary paths (edit to your local paths)
-cell_names_path     = os.path.join(data_path, "cell_names.txt")
-scvi_embeddings_csv = os.path.join(data_path, "scVI_embeddings.csv")
-seurat_metadata_csv = os.path.join(data_path, "seurat_metadata.csv")
+cell_names_path     = os.path.join(DATA_PATH, "cell_names.txt")
+scvi_embeddings_csv = os.path.join(DATA_PATH, "scVI_embeddings.csv")
+seurat_metadata_csv = os.path.join(DATA_PATH, "seurat_metadata.csv")
 cell_type_meta_path = "path/to/cell_type_metadata.csv"
 
 # Change to the data directory
-os.chdir(data_path)
+os.chdir(DATA_PATH)
 
 # List all .loom files
 loom_files = glob.glob("*.loom")
@@ -482,7 +484,7 @@ def plot_velocity_subset(adata_full, subset_mask, title, outfile,
 selected_short = ["WAds", "PreAds", "BAds"]
 mask_short = filtered_adata.obs["cell_type_short"].isin(selected_short)
 
-outfile_1 = os.path.join(out_dir, "velocity_adipocytes_all.pdf")
+outfile_1 = os.path.join(OUT_PATH, "velocity_adipocytes_all.pdf")
 adp_all = plot_velocity_subset(
     filtered_adata,
     subset_mask=mask_short,
@@ -550,7 +552,7 @@ mask_plot2 = mask_short & mask_sample
 
 print("Cells in the Dsubject3_BAT subset:", int(mask_plot2.sum()))
 
-outfile_2 = os.path.join(out_dir, "velocity_adipocytes_Dsubject3_BAT.pdf")
+outfile_2 = os.path.join(OUT_PATH, "velocity_adipocytes_Dsubject3_BAT.pdf")
 adp_dsubject3 = plot_velocity_subset(
     filtered_adata,
     subset_mask=mask_plot2,
@@ -567,7 +569,7 @@ mask_plot3 = mask_short & mask_deep
 
 print("Cells in the Deep subset:", int(mask_plot3.sum()))
 
-outfile_3 = os.path.join(out_dir, "velocity_adipocytes_Deep.pdf")
+outfile_3 = os.path.join(OUT_PATH, "velocity_adipocytes_Deep.pdf")
 adp_deep = plot_velocity_subset(
     filtered_adata,
     subset_mask=mask_plot3,
