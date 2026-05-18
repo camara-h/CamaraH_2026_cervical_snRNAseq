@@ -1,0 +1,506 @@
+# ---
+# title: "Plots for Figure 1"
+# output: html_document
+# date: "2025-01-14"
+# ---
+#
+# # --- Purpose ---
+#
+# This notebook assembles the plots used in Figure 1 of the manuscript.
+#
+# # --- Inputs and outputs ---
+#
+# Main inputs:
+# - cleaned Seurat object
+# - propeller cell proportion table
+# - propeller statistical summary table
+# - subject information table
+# - shared plotting themes and manuscript color palettes
+#
+# Main outputs:
+# - Figure 1 panel PDFs
+#
+# # --- Setup ---
+#
+# ```{r setup, include=FALSE}
+# -------------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------------
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(ggpubr)
+library(patchwork)
+library(here)
+library(openxlsx)
+library(grid)
+library(ggnewscale)
+
+# Shared plotting functions and manuscript palettes
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
+
+# -------------------------------------------------------------------------
+# Define inputs
+# -------------------------------------------------------------------------
+SEURAT_FILE <- here(
+  "..",
+  "data/cervical_at_gex_seurat.rds")
+
+# Raw subject info will be deposited in protected repo
+SUBJECT_INFO_FILE <- here(
+  "..",
+  "data/Figure_1/2023-09-14_SubjectInformationTable.xlsx"
+)
+
+PROPELLER_PROPORTIONS <- here(
+  "..",
+  "data/Figure_1/propeller_cellular_proportions_table.csv"
+)
+
+PROPELLER_STATS <- here(
+  "..",
+  "data/Figure_1/propeller_proportions_stat_table.csv"
+)
+
+# -------------------------------------------------------------------------
+# Define outputs
+# -------------------------------------------------------------------------
+OUTPUT_DIR <- here("..", "results", "Figure_1")
+dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
+# ```
+#
+# # --- Setup ---
+#
+# ## Load the main Seurat object
+#
+# The starting point for this figure script is the cleaned integrated Seurat
+# object generated upstream.
+#
+# ```{r}
+s.object <- readRDS(SEURAT_FILE)
+# ```
+#
+# # --- Panel 1B. Demographics ---
+#
+# This chunk loads the subject information table used for the demographic
+# summary associated with Figure 1.
+# Protected data will be submitted to dbGaP. Thus chunk is commented out
+# ```{r}
+# subject_info <- openxlsx::read.xlsx(
+#   SUBJECT_INFO_FILE,
+#   sheet = "Labs",
+#   rows = 1:19
+# )
+# 
+# subject_info
+# summary(subject_info)
+# ```
+#
+# # --- Panel 1D. UMAP plot ---
+#
+# This panel shows the main UMAP colored by simplified cell type labels used in
+# the manuscript.
+#
+# ```{r, fig.width = 5, fig.height = 4}
+scale_factor <- 6
+gg_umap <- DimPlot(
+  s.object,
+  reduction = "umap",
+  group.by = "cell_type_short",
+  label = TRUE,
+  label.size = 6 * scale_factor/ .pt,
+  repel = TRUE
+) +
+  scale_color_manual(values = palette.use, breaks = order)+
+  theme_nature_metabolism() +
+  theme_void() +
+  theme(
+    plot.title = element_blank(),
+    legend.text = element_text(size = 6 * scale_factor),
+    legend.key.size = unit(2.5 * scale_factor, "mm")
+  ) +
+  guides(
+    color = guide_legend(
+      ncol = 1,
+      override.aes = list(size = 1 * scale_factor)
+    )
+  ) 
+# ```
+#
+# ```{r, fig.width = 2.755906 * 6, fig.height = 2.362205 * 6}
+mm_to_in(c(70, 60))
+
+gg_umap <- gg_umap +
+  labs(title = "Cervical AT snRNAseq\nUMAP Plot") +
+  theme(plot.title = element_text(size = 6 * scale_factor, face = "bold", hjust = 0.5))
+
+gg_umap
+
+ggsave(
+  file.path(OUTPUT_DIR, "1D_umap_plot.pdf"),
+  plot = gg_umap,
+  width = 70* scale_factor,
+  height = 60* scale_factor,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+# ```
+#
+# #  --- Panel 1E. Violin plot of marker genes ---
+#
+# This panel visualizes marker genes used to support cell type annotation in the
+# main dataset.
+#
+# ```{r}
+features <- c(
+  "ADIPOQ", "PPARG", "PPARGC1A", "PDGFRA", "DCN", "JAM2", "SHANK3",
+  "PROX1", "STEAP4", "MYOCD", "CD163", "CPA3", "IL7R", "MS4A1",
+  "CSF3R", "CDH19", "CNTNAP5", "PTH", "PRM1"
+)
+
+gg_violin <- VlnPlot(
+  s.object,
+  features = features,
+  flip = TRUE,
+  stack = TRUE,
+  group.by = "cell_type_short",
+  combine = TRUE
+) +
+  scale_fill_manual(values = gene_type_palette) +
+  NoLegend() +
+  theme(
+    axis.text.x = element_text(size = 6, face = "plain"),
+    axis.title.y = element_text(size = 6, face = "plain"),
+    axis.text.y.right = element_text(size = 6, face = "plain"),
+    strip.text = element_text(size = 6, face = "plain"),
+    strip.background = element_rect(linewidth = 0.3),
+    axis.line = element_line(color = "black", linewidth = 0.3),
+    axis.ticks = element_line(color = "black", linewidth = 0.3),
+    axis.title.x = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+# Preserve the thinner violin outline used in the original script
+gg_violin$layers[[1]]$aes_params$size <- 0.3
+# ```
+#
+# ```{r, fig.width = 2.755906, fig.height = 2.362205}
+mm_to_in(c(70, 60))
+
+gg_violin <- gg_violin +
+  theme(plot.tag = element_text(size = 6, face = "plain")) +
+  labs(title = "Expression of Cell Type Marker Genes") +
+  theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5))
+
+gg_violin
+
+ggsave(
+  file.path(OUTPUT_DIR, "1E_violin_markers.pdf"),
+  plot = gg_violin,
+  width = 70,
+  height = 60,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+# ```
+#
+# # --- Panel 1F. Cell type abundance ---
+#
+# This panel reads the propeller-derived cellular abundance tables calculated
+# upstream and plots regional differences in cell type proportions.
+#
+# ```{r}
+propeller_proportions <- read_csv(PROPELLER_PROPORTIONS)
+propeller_stats <- read_csv(PROPELLER_STATS)
+# ```
+#
+# ```{r}
+# Adjust statistic color display
+propeller_stats$colors <- ifelse(propeller_stats$p.val < 0.05, "red", "black")
+# ```
+#
+# ```{r fig.height = 4, fig.width = 10}
+p_value_y_position <- max(propeller_stats$y.position)
+
+propeller_proportions <- propeller_proportions %>%
+  mutate(
+    neck_region = factor(
+      neck_region,
+      levels = c("Superficial", "Intermediate", "Deep")
+    )
+  )
+
+# -----------------------------
+#  Prepare subplots 
+# -----------------------------
+
+abundance_cutoff <- 3
+
+high_label <- paste0("Mean abundance ≥ ", abundance_cutoff, "%")
+low_label  <- paste0("Mean abundance < ", abundance_cutoff, "%")
+
+cluster_abundance <- propeller_proportions %>%
+  group_by(clusters) %>%
+  summarise(avg_pct = mean(n_pct, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    abundance_group = if_else(
+      avg_pct < abundance_cutoff,
+      low_label,
+      high_label
+    )
+  )
+
+propeller_proportions_plot <- propeller_proportions %>%
+  left_join(cluster_abundance, by = "clusters") %>%
+  mutate(
+    abundance_group = factor(
+      abundance_group,
+      levels = c(high_label, low_label)
+    ),
+    neck_region = factor(
+      neck_region,
+      levels = c("Superficial", "Intermediate", "Deep")
+    )
+  )
+
+# -----------------------------
+#  Create Inputs Function
+# -----------------------------
+prepare_propeller_plot_inputs <- function(
+    plot_data,
+    stats_data,
+    cluster_col_stats = "cell_type_short",
+    y_expand = 0.08,
+    bracket_width = 0.20
+) {
+  
+  cluster_order <- plot_data %>%
+    group_by(clusters) %>%
+    summarise(avg_pct = mean(n_pct, na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(avg_pct)) %>%
+    pull(clusters)
+  
+  plot_data <- plot_data %>%
+    mutate(
+      clusters = factor(clusters, levels = cluster_order)
+    )
+  
+  panel_range <- range(plot_data$n_pct, na.rm = TRUE)
+  y_offset <- diff(panel_range) * y_expand
+  
+  if (!is.finite(y_offset) || y_offset == 0) {
+    y_offset <- max(plot_data$n_pct, na.rm = TRUE) * y_expand
+  }
+  
+  if (!is.finite(y_offset) || y_offset == 0) {
+    y_offset <- 0.1
+  }
+  
+  y_positions <- plot_data %>%
+    group_by(clusters) %>%
+    summarise(
+      y.position = max(n_pct, na.rm = TRUE) + y_offset,
+      .groups = "drop"
+    ) %>%
+    mutate(
+      clusters_chr = as.character(clusters)
+    )
+  
+  stats_data_plot <- stats_data %>%
+    select(
+      -any_of(c(
+        "x_position",
+        "xmin",
+        "xmax",
+        "y.position",
+        "y.position.x",
+        "y.position.y",
+        "clusters"
+      ))
+    ) %>%
+    filter(.data[[cluster_col_stats]] %in% cluster_order) %>%
+    left_join(
+      y_positions %>%
+        select(clusters_chr, y.position),
+      by = setNames("clusters_chr", cluster_col_stats)
+    ) %>%
+    mutate(
+      x_position = match(.data[[cluster_col_stats]], cluster_order),
+      xmin = x_position - bracket_width,
+      xmax = x_position + bracket_width,
+      clusters = factor(.data[[cluster_col_stats]], levels = cluster_order)
+    )
+  
+  list(
+    plot_data = plot_data,
+    stats_data = stats_data_plot,
+    cluster_order = cluster_order
+  )
+}
+
+# -----------------------------
+#  Plotting function 
+# -----------------------------
+make_propeller_plot <- function(
+    plot_data,
+    stats_data = NULL,
+    cluster_order = NULL,
+    plot_title = NULL,
+    show_legend = TRUE
+) {
+  
+  if (is.null(cluster_order)) {
+    cluster_order <- plot_data %>%
+      group_by(clusters) %>%
+      summarise(avg_pct = mean(n_pct, na.rm = TRUE), .groups = "drop") %>%
+      arrange(desc(avg_pct)) %>%
+      pull(clusters)
+  }
+  
+  p <- ggplot(
+    plot_data,
+    aes(x = clusters, y = n_pct, fill = neck_region)
+  ) +
+    geom_hline(yintercept = 40, linewidth = 0.3, color = "black", linetype = "dashed") + 
+    geom_boxplot(
+      outlier.shape = NA,
+      position = position_dodge(width = 0.75),
+      alpha = 0.75
+    ) +
+    geom_jitter(
+      color = "black",
+      shape = 21,
+      alpha = 0.9,
+      size = 1,
+      position = position_jitterdodge(
+        jitter.width = 0.1,
+        dodge.width = 0.75
+      )
+    ) +
+    scale_fill_manual(values = neck.color, name = "Neck Region") +
+    scale_color_manual(values = neck.color, name = "Neck Region") +
+    scale_x_discrete(limits = cluster_order) +
+    ggpubr::grids(axis = "y") +
+    theme_nature_metabolism() +
+    theme(
+      axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+      axis.title.x = element_blank(),
+      legend.position = if (show_legend) c(1, 0.80) else "none",
+      legend.justification = c("right", "top"),
+      line = element_line(linewidth = 0.1)
+    ) +
+    ylab("Proportion of Cells in Sample") +
+    ggtitle(plot_title)
+  
+  if (!is.null(stats_data) && nrow(stats_data) > 0) {
+    
+    y_range <- range(plot_data$n_pct, na.rm = TRUE)
+    y_padding <- diff(y_range) * 0.15
+    
+    if (!is.finite(y_padding) || y_padding == 0) {
+      y_padding <- max(plot_data$n_pct, na.rm = TRUE) * 0.15
+    }
+    
+    if (!is.finite(y_padding) || y_padding == 0) {
+      y_padding <- 0.1
+    }
+    
+    p <- p +
+      new_scale_color() +
+      stat_pvalue_manual(
+        data = stats_data,
+        color = "colors",
+        xmin = "xmin",
+        xmax = "xmax",
+        label = "p_display",
+        y.position = "y.position",
+        vjust = -0.2,
+        tip.length = 0.006,
+        inherit.aes = FALSE,
+        size = 6 / .pt
+      ) +
+      scale_color_identity(guide = "none") +
+      coord_cartesian(
+        ylim = c(
+          NA,
+          max(stats_data$y.position, na.rm = TRUE) + y_padding
+        )
+      )
+  }
+  
+  p
+}
+
+# -----------------------------
+#  Create plots 
+# -----------------------------
+propeller_plot_inputs <- list()
+propeller_plots <- list()
+clusters_per_plot <- vector()
+
+for (group_name in levels(propeller_proportions_plot$abundance_group)) {
+  
+  plot_data_group <- propeller_proportions_plot %>%
+    filter(abundance_group == group_name)
+  
+  cluster_in_plot <- length(unique(plot_data_group$clusters))
+  clusters_per_plot <- c(clusters_per_plot, cluster_in_plot)
+  
+  if (nrow(plot_data_group) == 0) {
+    next
+  }
+  
+  propeller_plot_inputs[[group_name]] <- prepare_propeller_plot_inputs(
+    plot_data = plot_data_group,
+    stats_data = propeller_stats,
+    cluster_col_stats = "cell_type_short",
+    y_expand = 0.08,
+    bracket_width = 0.20
+  )
+  
+  propeller_plots[[group_name]] <- make_propeller_plot(
+    plot_data = propeller_plot_inputs[[group_name]]$plot_data,
+    stats_data = propeller_plot_inputs[[group_name]]$stats_data,
+    cluster_order = propeller_plot_inputs[[group_name]]$cluster_order,
+    plot_title = group_name,
+    show_legend = TRUE
+  )
+}
+
+# -----------------------------
+#  Display plots 
+# -----------------------------
+propeller_plots
+
+# ```
+#
+# ```{r, fig.width = 7.086614, fig.height = 1.968504, warning=FALSE}
+mm_to_in(c(180, 50))
+
+plot_widths <- clusters_per_plot / sum(clusters_per_plot)
+
+gg_propeller_v2 <- wrap_plots(
+  propeller_plots,
+  widths = plot_widths, guides = "collect"
+)
+
+gg_propeller_v2
+
+ggsave(
+  file.path(OUTPUT_DIR, "1F_propeller_cervical_cell_abundance.pdf"),
+  plot = gg_propeller_v2,
+  width = 180,
+  height = 50,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+# ```
+#
+#
+#

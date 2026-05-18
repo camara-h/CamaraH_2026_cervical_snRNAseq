@@ -1,0 +1,2909 @@
+#' ---
+#' title: "Plots for Figure 2 and 3"
+#' output: html_document
+#' date: "2025-01-14"
+#' ---
+#' 
+#' Plotting of Figures 2 and 3 were combined as they share the VISION scores plotting for most part of it
+#' 
+#' # --- Setup ---
+## ----setup, include=FALSE------------------------------------------------------------------------------------------------------------------
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+library(RColorBrewer)
+library(ggpubr)
+library(patchwork)
+library(openxlsx)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+library(ggnewscale)
+library(ggvenn)
+library(viridis)
+library(enrichR)
+library(colorspace)
+library(here)
+library(effsize)
+library(pheatmap)
+
+
+# OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
+
+# --- Setup paths ---
+## Inputs
+### Seurat input
+SEURAT_INPUT <- here(
+  "..",
+  "data/cervical_at_gex_seurat.rds")
+
+
+### HEAT signature generation
+HEAT_SIGNATURE_RDATA <- here(
+  "..",
+  "data/figure_2_3_S2_S3/heat_signature.Rdata")
+LYNES_MICROARRAY_CTS <- here(
+  "..",
+  "data/figure_2_3_S2_S3/Supplementary_Table_cervical_at_microarray.xlsx")
+LYNES_CORRELATION_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/Lynes_et_al_correlation.csv")
+SALEJ_BULK_CTS <- here(
+  "..",
+  "data/figure_2_3_S2_S3/logCPM_for_correlations.csv")
+SALEJ_CORRELATION_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/Salej_et_al_logCPM_correlation.csv")
+HEAT_VENN_RDATA <- here(
+  "..",
+  "data/figure_2_3_S2_S3/genes_for_venn.Rdata")
+HEAT_SIGNATURE_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/heat_signature.csv")
+
+
+# HEAT Enrichr
+ENRICHED_RDS <- here(
+  "..",
+  "data/figure_2_3_S2_S3/enriched_heat.rds")
+
+# HEAT threshold
+HEAT_THRESHOLD_RDS <- here(
+  "..",
+  "data/figure_2_3_S2_S3/wad_heat_threshold.rds")
+
+
+# BULK RNAseq
+GSEA_HEAT_BULK_DIR <- here(
+  "..",
+  "data/figure_2_3_S2_S3/ssGSEA")
+
+PARAGANG_BULK_MTX_RDS <- here(
+  "..",
+  "data/figure_2_3_S2_S3/GSE49795_Sondergaard_expression_matrix.rds") 
+BULK_DIR <- here(
+  "..",
+  "data/figure_2_3_S2_S3/Cleaned_Datasets")
+BULK_META_DIR <- here(
+  "..",
+  "data/figure_2_3_S2_S3/Experimental_Design")
+
+A41_CTS_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/camaraH_a41_d18_fpkm.xlsx")
+A38_CTS_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/camaraH_a38_d18_tpm.xlsx")
+CERO_CTS_XLSX <- here(
+  "..",
+  "data/figure_2_3_S2_S3/RNA-seq data set Cero et al.xlsx")
+
+
+# VISION
+VISION_SIG_DIR <- here(
+  "..",
+  "data/figure_2_3_S2_S3/vision_signature_scores")
+
+# Angueira dataset
+ANGUEIRA_ADIPO_SUB_RDS <- here(
+  "..",
+  "data/figure_2_3_S2_S3/AngueiraA_Dataset_adipo_recluster.rds")
+
+ANGUEIRA_HEATvUCP1_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/Angueira_HEATvUCP1.csv")
+
+# Mouse datasets
+## Shamsi 2021
+SHAMSI_VISON_SIG <- file.path(VISION_SIG_DIR, "ShamsiF_Dataset_VISION_sigScore.csv")
+SHAMSI_RDS <- here(
+  "..",
+  "data/figure_2_3_S2_S3/ShamsiF_Dataset.rds")
+
+### CIBERSORTx
+CIBERSORT_PROPS_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/deconvolution_cellular_proportions_table.csv")
+
+# GTEx
+GTEX_META_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/gtex_metadata_filtered.csv")
+GTEX_AOV_STATS_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/stratified_aov_statistics.csv")
+GTEX_AOV_STATS_SIGNIF_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/significant_stratified_aov.csv")
+GTEX_META_ANNOT_CSV <- here(
+  "..",
+  "data/figure_2_3_S2_S3/gtex_dictionary_filtered.csv")
+
+# Outputs
+OUTPUT_DIR <- here("..", "results", "Figure_2_3_S2_S3")
+
+dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
+
+#' 
+#' # ---Load the HEAT signature
+#' 
+## ------------------------------------------------------------------------------------------------------------------------------------------
+load(HEAT_SIGNATURE_RDATA)
+
+#' 
+#' # --- Panel S2A. Heatmap of UCP1 correlated genes in Microarray ---
+#' ## ---Load count matrix ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Load and remove spaces from column names
+lynes_cts <- read.xlsx(LYNES_MICROARRAY_CTS, sheet = "All Data by Individual")
+
+# Replace spaces and dots
+names(lynes_cts) <- gsub("[ \\.]", "_", names(lynes_cts))
+
+#' 
+#' ## ---Load correlation info ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+expanded_lynes_cor_df <- read_csv(file = LYNES_CORRELATION_CSV)
+
+#' 
+#' ## --- Format, filter matrix and plot ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Select deep neck (CS) samples and create unique gene_probe names
+data_lynes <- lynes_cts %>%
+  dplyr::select(grep("CS", names(lynes_cts), value = TRUE), Gene_Symbol, Probe_Set_ID) %>%
+  mutate(Gene_Probe = paste0(Gene_Symbol, "_(", Probe_Set_ID, ")")) %>%
+  column_to_rownames("Gene_Probe") %>%
+  select(-c(Gene_Symbol, Probe_Set_ID))
+
+# Order samples according to UCP1 expression
+samples <- names(data_lynes)
+
+ranked_sample_ucp1 <- data_lynes %>%
+  t() %>%
+  as_tibble(rownames = "Sample") %>%
+  arrange(`UCP1_(11732874_at)`) %>%
+  pull(Sample)
+
+data_lynes <- data_lynes %>%
+  select(all_of(ranked_sample_ucp1))
+
+# Keep all significantly positive correlated genes
+strongest_corrs <- expanded_lynes_cor_df %>%
+  filter(
+    Gene_Probe %in% rownames(data_lynes),
+    p_value < 0.05,
+    FDR < 0.1,
+    estimate > 0
+  ) %>%
+  arrange(desc(estimate))
+
+# Put UCP1 first, then all positive genes
+gene_order_ids <- c(
+  "UCP1_(11732874_at)",
+  setdiff(strongest_corrs$Gene_Probe, "UCP1_(11732874_at)")
+)
+
+gene_order_ids <- gene_order_ids[gene_order_ids %in% rownames(data_lynes)]
+
+data_lynes <- data_lynes[gene_order_ids, , drop = FALSE]
+data_lynes <- as.matrix(data_lynes)
+
+# Keep internal rownames unique
+internal_ids <- rownames(data_lynes)
+
+# Gene symbols for display
+gene_symbols <- gsub("_\\(.*\\)$", "", internal_ids)
+
+# Scale all positively correlated genes
+scaled_data <- t(scale(t(data_lynes)))
+
+# Split UCP1 from others
+gene_group <- ifelse(gene_symbols == "UCP1", "UCP1", "Others")
+gene_group <- factor(gene_group, levels = c("UCP1", "Others"))
+
+# Which genes to label
+genes_to_label <- union("UCP1", HEAT_signature)
+
+# Find rows to mark
+rows_to_mark <- which(gene_symbols %in% genes_to_label)
+labels_to_mark <- gene_symbols[rows_to_mark]
+
+
+col_fun <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
+
+ht <- Heatmap(
+  scaled_data,
+  name = "Z-score",
+  row_split = gene_group,
+  row_title = NULL,
+  col = col_fun,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  show_column_names = FALSE, 
+  show_row_names = FALSE,
+  column_names_gp = gpar(fontsize = 5),
+  rect_gp = gpar(col = "black", lwd = 0),
+  # column_title = "Positively UCP1 correlated genes\nThis Study Microarray",
+  # column_title_gp = gpar(fontsize = 6, fontface = "bold"),
+  show_heatmap_legend = FALSE,
+  left_annotation = rowAnnotation(
+    mark = anno_mark(
+      at = rows_to_mark,
+      labels = labels_to_mark,
+      side = "left",
+      labels_gp = gpar(
+        fontsize = 5,
+        lineheight = 0.8
+      ),
+      lines_gp = gpar(
+        col = grDevices::adjustcolor("gray50", alpha.f = 0.6),
+        lwd = 0.3
+      ),
+      link_width = unit(2, "mm"),
+      link_height = unit(0.8, "mm"),
+      padding = unit(0.2, "mm"),
+      extend = unit(0, "mm")
+    )
+  )
+)
+
+
+#' 
+#' ## --- Save plot ---
+## ----fig.width=1.181102, fig.height=7.086614-----------------------------------------------------------------------------------------------
+mm_to_in(c(30, 180))
+ht
+
+pdf(file.path(OUTPUT_DIR, "S2A_ucp1_heatmap_microarray.pdf"), width = mm_to_in(30), height = mm_to_in(180))
+ht
+dev.off()
+
+#' 
+#' 
+#' # --- Panel S2B. Heatmap of UCP1 correlated genes in Salej Duran et al 2025 ---
+#' ## ---Load count matrix
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Load TPM data
+log2_cpm <- read_csv(SALEJ_BULK_CTS)
+
+# Filter out NA genes
+log2_cpm <- log2_cpm[!is.na(log2_cpm$gene), ]
+
+# Store gene names
+ensmbl_genes <- log2_cpm %>%
+  select(X, gene) %>%
+  rename("Ensembl" = "X")
+
+# Add genes to rownames and keep Deep neck samples
+log2_cpm_clean <- log2_cpm %>%
+  # filter(gene %in% c("UCP1", HEAT_signature)) %>%
+  mutate(gene = make.unique(gene)) %>%
+  column_to_rownames("X") %>%
+  select(contains("Deep"))
+
+# Transpose
+cpm_deep.t <- as.data.frame(t(log2_cpm_clean))
+
+# Convert to numeric
+cpm_deep.t <- data.frame(lapply(cpm_deep.t, function(x) as.numeric(as.character(x))))
+
+#' 
+#' ## ---Load correlation info
+## ------------------------------------------------------------------------------------------------------------------------------------------
+salej_cor_df <- read_csv(file = SALEJ_CORRELATION_CSV)
+
+#' 
+#' ## --- Format, filter matrix and plot ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Create object data_salej (Sample x Gene ensembls at this stage)
+data_salej <- cpm_deep.t
+
+# Order samples according to UCP1 expression
+ucp1_ensembl <- ensmbl_genes %>%
+  filter(gene == "UCP1") %>%
+  pull(Ensembl)
+
+data_salej <- data_salej %>%
+  arrange(.data[[ucp1_ensembl]])
+
+# Keep all significantly positive correlated genes
+strongest_corrs <- salej_cor_df %>%
+  filter(
+    Ensembl %in% names(data_salej),
+    PValue < 0.05,
+    FDR < 0.1,
+    estimate > 0
+  ) %>%
+  arrange(desc(estimate))
+
+gene_order_ids <- c(
+  ucp1_ensembl,
+  setdiff(strongest_corrs$Ensembl, ucp1_ensembl)
+)
+
+gene_order_ids <- gene_order_ids[gene_order_ids %in% names(data_salej)]
+
+data_salej <- data_salej[, gene_order_ids, drop = FALSE]
+
+# Map Ensembl to gene symbol
+gene_symbols <- ensmbl_genes$gene[match(gene_order_ids, ensmbl_genes$Ensembl)]
+
+# Keep internal IDs unique
+data_salej <- as.matrix(data_salej)
+colnames(data_salej) <- gene_order_ids
+
+# Convert to Genes x Samples
+data_salej <- t(data_salej)
+
+scaled_data <- t(scale(t(data_salej)))
+
+gene_group <- ifelse(gene_symbols == "UCP1", "UCP1", "Others")
+gene_group <- factor(gene_group, levels = c("UCP1", "Others"))
+
+genes_to_label <- union("UCP1", HEAT_signature)
+
+rows_to_mark <- which(gene_symbols %in% genes_to_label)
+labels_to_mark <- gene_symbols[rows_to_mark]
+
+col_fun <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
+
+ht <- Heatmap(
+  scaled_data,
+  name = "Z-score",
+  row_split = gene_group,
+  row_title = NULL,
+  col = col_fun,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  show_column_names = FALSE, 
+  show_row_names = FALSE,
+  column_names_gp = gpar(fontsize = 5),
+  rect_gp = gpar(col = "black", lwd = 0),
+  # column_title = "Positively UCP1 correlated genes\nSalej et al. RNAseq",
+  # column_title_gp = gpar(fontsize = 6, fontface = "bold"),
+  show_heatmap_legend = FALSE,
+  left_annotation = rowAnnotation(
+    mark = anno_mark(
+      at = rows_to_mark,
+      labels = labels_to_mark,
+      side = "left",
+      labels_gp = gpar(
+        fontsize = 5,
+        lineheight = 0.8
+      ),
+      lines_gp = gpar(
+        col = grDevices::adjustcolor("gray50", alpha.f = 0.6),
+        lwd = 0.3
+      ),
+      link_width = unit(2, "mm"),
+      link_height = unit(0.8, "mm"),
+      padding = unit(0.2, "mm"),
+      extend = unit(0, "mm")
+    )
+  )
+)
+
+#' 
+#' 
+#' ## --- Save plot ---
+## ----fig.width=1.181102, fig.height=7.086614-----------------------------------------------------------------------------------------------
+mm_to_in(c(30, 180))
+
+ht
+
+pdf(file.path(OUTPUT_DIR, "S2B_ucp1_heatmap_salej.pdf"), width = mm_to_in(30), height = mm_to_in(180))
+ht
+dev.off()
+
+#' 
+#' 
+#' # --- Panel 2A. VennDiagram HEAT signature strategy ---
+## ----fig.width=1.181102, fig.height=1.181102-----------------------------------------------------------------------------------------------
+mm_to_in(c(30,50))
+# Load the list of genes_for_venn for HEAT signature plot analysis
+load(file = HEAT_VENN_RDATA)
+str(genes_for_venn)
+# ---Plot Venn Diagram ---
+myCol <- brewer.pal(length(genes_for_venn), "Pastel2")
+venn <- ggvenn(
+  text_size = 6/.pt,
+  genes_for_venn,
+  fill_color = myCol, 
+  show_percentage = FALSE, 
+  set_name_color = colorspace::darken(myCol, amount = 0.6),
+  stroke_size = 0, 
+  set_name_size = 6/.pt, 
+) 
+venn
+# Save PDF
+ggsave(file.path(OUTPUT_DIR, "2A.2_venn_heat.pdf"), venn, width = 30, height = 50, units = "mm", bg = "white",  dpi = 600)
+
+# ---Plot Venn Diagram Subset ---
+myCol <- brewer.pal(2, "Pastel2")
+venn <- ggvenn(
+  text_size = 6/.pt,
+  genes_for_venn[1:2],
+  fill_color = myCol[1:2], 
+  show_percentage = FALSE, 
+  set_name_color = colorspace::darken(myCol[1:2], amount = 0.6),
+  stroke_size = 0, 
+  set_name_size = 6/.pt, 
+) 
+venn
+# Save PDF
+ggsave(file.path(OUTPUT_DIR, "2A.1_venn_heat.pdf"), venn, width = 30, height = 50, units = "mm", bg = "white",  dpi = 600)
+
+#' 
+#' 
+#' # --- Panel 2B. Heatmap of HEAT signature in cervical AT of CamaraH ---
+#' ## --- Load Seurat - CamaraH ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+s.object <- readRDS(SEURAT_INPUT)
+
+#' 
+#' 
+#' ## --- Format data ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+
+# Load HEAT signature
+load(HEAT_SIGNATURE_RDATA)
+data <- DotPlot(s.object, HEAT_signature, group.by = "cell_type_short")
+data <- data$data
+
+cell_order <- data |>
+  group_by(id) |>
+  summarise(mean.exp = mean(avg.exp.scaled)) |>
+  arrange(mean.exp) |>
+  pull(id)
+gene_order <- data |>
+  filter(id == "BAds") |>
+  arrange(-avg.exp.scaled) |>
+  pull(features.plot)
+data <- data |> mutate(
+  id = factor(id, levels = cell_order),
+  features.plot = factor(features.plot, levels = gene_order)
+)
+
+#' 
+#' ## --- Plotting and save ---
+## ----fig.width=7.086614, fig.height=1.968504-----------------------------------------------------------------------------------------------
+mm_to_in(c(180, 50))
+
+gg_heat_heatmap_cervical <- ggplot(data, aes(features.plot, id)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_continuous_divergingx(
+    palette = "RdGy", rev = T,
+    mid = 0,
+    name = "Scaled Expression"
+  ) +
+  theme_nature_metabolism(base_size = 6) +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    axis.line = element_blank()
+  ) +
+  labs(title = "HEAT Signature Gene Expression")
+
+gg_heat_heatmap_cervical + theme(legend.position = "right")
+
+ggsave(file.path(OUTPUT_DIR, "2B_heat_heatmap_cervical_at.pdf"), plot = gg_heat_heatmap_cervical, width = 180, height = 50, units = "mm", bg = "white",  dpi = 600)
+
+#' 
+#' 
+#' # --- Plot VISION scores ---
+#' ## --- Read signature score files ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# List files to read
+sigscores_df_files <- list.files(
+  VISION_SIG_DIR,
+  full.names = TRUE,
+  pattern = "_sigScore.csv"
+)
+
+# Read forcing the right type for each column
+sigscore_list <- lapply(
+  sigscores_df_files,
+  read_csv,
+  col_types = "cddcccccdccc"
+)
+
+# Merge the files in a single one
+sigscores_df <- bind_rows(sigscore_list)
+
+# Remove in case there is duplicated signature loading
+sigscores_df <- sigscores_df %>%
+  distinct(barcode, Hallmark, dataset, .keep_all = T)
+
+sigscores_df |> distinct(Hallmark) |> filter(str_detect(Hallmark, "OXIDATIVE"))
+sigscores_df |> filter(Hallmark %in% c("HEAT", 
+                                       "HALLMARK_FATTY_ACID_METABOLISM", 
+                                       "HALLMARK_OXIDATIVE_PHOSPHORYLATION", 
+                                       "BATLAS", 
+                                       "GOBP_ADAPTIVE_THERMOGENESIS")) |> 
+write_csv("~/Downloads/CamaraH_vision_subset.csv")
+
+# Clean dataset name
+sigscores_df$dataset <- str_remove(sigscores_df$dataset, "_Dataset")
+
+sigscores_df |> distinct(Hallmark) |> filter(str_detect(Hallmark, "OXIDATIVE"))
+sigscores_df |> filter(Hallmark %in% c("HEAT", 
+                                       "HALLMARK_FATTY_ACID_METABOLISM", 
+                                       "HALLMARK_OXIDATIVE_PHOSPHORYLATION", 
+                                       "BATLAS", 
+                                       "GOBP_ADAPTIVE_THERMOGENESIS")) |> 
+write_csv("~/Downloads/CamaraH_vision_subset.csv")
+
+#' 
+#' ## --- Add graphical information ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Rename Efthymiou adipocytes
+sigscores_df <- sigscores_df %>% mutate(
+  cell_type = case_when(
+    str_detect(dataset, "Eft") & str_detect(cell_type, "Adipo") ~ "Adipocytes",
+    TRUE ~ cell_type
+  )
+)
+
+# Rename Emont cell types to Title Case
+sigscores_df <- sigscores_df %>% mutate(
+  cell_type = case_when(
+    str_detect(dataset, "Emont") ~ str_to_title(cell_type),
+    TRUE ~ cell_type
+  )
+)
+
+# Add some graph formatting information
+sigscores_df <- sigscores_df %>%
+  mutate(
+    fill_color = case_when(
+      str_detect(cell_type, "ASPC|[Pp]rogenitor") ~ "grey90",
+      str_detect(cell_type, "Brown") ~ "#97600f",
+      (region == "perivasc" & str_detect(cell_type, "Adipo")) ~ "#deb373",
+      (region == "neck" & str_detect(cell_type, "Adipo")) ~ "#deb373",
+      str_detect(cell_type, "Adipo") ~ "#ffe65a",
+      TRUE ~ "grey90"
+    ),
+    region_label = case_when(
+      region == "subc" ~ "Subcutaneous Abdominal",
+      region == "visc" ~ "Visceral Abdominal",
+      region == "perivasc" ~ "Perivascular",
+      region == "Subc" ~ "Subcutaneous Cervical",
+      region == "neck" ~ "Deep Cervical",
+      region == "Deep" ~ "Deep Cervical",
+      region == "Superficial" ~ "Subcutaneous Cervical",
+      TRUE ~ NA
+    )
+  ) %>%
+  mutate(cell_type_dataset = paste(cell_type, dataset, sep = "_"))
+
+sigscores_df <- sigscores_df |> 
+  mutate(publication = case_when(dataset == "CamaraH" ~ "This Study",
+                                            dataset == "AngueiraA" ~ "Angueira et al. 2021",
+                                            dataset == "SunW" ~ "Sun et al. 2020",
+                                            dataset == "WangT" ~ "Wang et al. 2024",
+                                            dataset == "EfthymiouV" ~ "Efthymiou et al. 2025",
+                                            dataset =="LazarescuO" ~ "Lazarescu et al. 2025",
+                                            dataset == "Emont" ~ "Emont et al. 2022",
+                                            TRUE ~ "Unknown"),
+          depot = case_when(dataset == "CamaraH" ~ "Cervical",
+                                            dataset == "AngueiraA" ~ "Perivascular",
+                                            dataset == "SunW" ~ "Cervical",
+                                            dataset == "WangT" ~ "Cervical",
+                                            dataset == "EfthymiouV" ~ "Abdominal",
+                                            dataset =="LazarescuO" ~ "Abdominal",
+                                            dataset == "Emont" ~ "Abdominal",
+                                            TRUE ~ "Unknown"),
+          cell_type_Region = interaction(cell_type, region_label, sep = " | ", drop = TRUE),
+         region_extension = str_remove(region_label, " .*"),
+         region_extension = ifelse(str_detect(region_extension, "vascular"), "", region_extension)) 
+
+
+
+# Put CamaraH as the first dataset by factoring
+dataset_levels <- sort(unique(sigscores_df$dataset))
+idx <- match("CamaraH", dataset_levels)
+dataset_levels <- c(dataset_levels[idx], dataset_levels[-idx])
+sigscores_df$dataset <- factor(sigscores_df$dataset, levels = dataset_levels)
+
+# Remove cells with less than 10
+less_than_10_cells <- sigscores_df %>%
+  distinct(cell_type_dataset, region, barcode) %>%
+  count(cell_type_dataset, region) %>%
+  filter(n <= 10) %>%
+  mutate(filter_col = paste0(cell_type_dataset, region, sep = "_")) %>%
+  pull(filter_col)
+
+sigscores_df <- sigscores_df %>%
+  mutate(filter_col = paste0(cell_type_dataset, region, sep = "_")) %>%
+  filter(!filter_col %in% less_than_10_cells)
+
+sigscores_df %>% filter(
+  str_detect(dataset, "Eft") & str_detect(cell_type, "Adipo")
+)
+
+sigscores_df |> count(dataset, cell_type_dataset)
+
+#' 
+#' ## --- Load Seurat from CamaraH  ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+s.object <- readRDS(SEURAT_INPUT)
+
+#' 
+#' # --- Panel 2C. HEAT signature Feature Plot ---
+## ----fig.width=1.13189* scale_factor, fig.height=1.13189* scale_factor---------------------------------------------------------------------
+mm_to_in(28.75)
+
+scale_factor <- 2
+
+
+meta_simplified <- s.object@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select(barcode, cell_type_short)
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH", Hallmark == "HEAT") %>%
+  left_join(meta_simplified, by = "barcode")
+
+# Loop over the selected signatures=======
+gg_heat_featplot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigScores)) +
+  geom_point(size = 0.1) +
+  scale_color_viridis_c(option = "viridis", name = "Signature score (VISION)") +
+  theme_nature_metabolism(base_size = 6 * scale_factor) +
+  theme_no_axis() +
+  theme(legend.position = "right") +
+  theme(
+    legend.key.size = unit(1.5 * scale_factor, "mm"),
+    legend.text = element_text(size = 5 * scale_factor),
+    legend.title = element_text(size = 6 * scale_factor)
+  ) +
+  labs(title = "HEAT Signature score")
+
+gg_heat_featplot
+
+#' 
+## ----fig.width=1.13189* scale_factor, fig.height=1.13189* scale_factor---------------------------------------------------------------------
+mm_to_in(28.75)
+
+meta_simplified <- s.object@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select(barcode, cell_type_short)
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH", Hallmark == "HEAT") %>%
+  left_join(meta_simplified, by = "barcode")
+
+### Circle the brown adipocyte cluster
+brown <- graph.data %>%
+  distinct(barcode, .keep_all = TRUE) |> 
+  filter(cell_type == "Brown Adipocytes") %>%
+  select(umap_1, umap_2)
+
+# robust center
+cx <- median(brown$umap_1, na.rm = TRUE)
+cy <- median(brown$umap_2, na.rm = TRUE)
+
+# robust radius: e.g. 90% of points within the circle
+d <- sqrt((brown$umap_1 - cx)^2 + (brown$umap_2 - cy)^2)
+r <- quantile(d, 0.90, na.rm = TRUE) * 1.15  # +15% padding
+
+theta <- pi/4
+x_lab <- cx + 2 * r * cos(theta)
+y_lab <- cy + r * sin(theta)
+
+gg_heat_featplot_annot <- gg_heat_featplot +
+  annotate("path",
+           x = cx + r * cos(seq(0, 2*pi, length.out = 361)),
+           y = cy + r * sin(seq(0, 2*pi, length.out = 361)),
+           linewidth = 0.4,
+           color = "black") +
+  annotate("text",
+           x = x_lab, y = y_lab,
+           label = "BAds",
+           hjust = 0, vjust = 0,          # anchor text from lower-left
+           nudge_x = 0.1, nudge_y = 0.1,   # tweak for your UMAP scale
+           size = 6* scale_factor/.pt)
+
+#' 
+#' ## --- Plotting and save ---
+## ----fig.width=1.13189* scale_factor, fig.height=1.13189* scale_factor---------------------------------------------------------------------
+gg_heat_featplot_annot
+# Save
+ggsave(file.path(OUTPUT_DIR, "2C_heat_vision_featplot.pdf"), plot = gg_heat_featplot_annot, width = 100 * scale_factor, height = 50 * scale_factor, units = "mm", bg = "white",  dpi = 600)
+
+#' 
+#' # --- Panel S2D. HEAT signature Violin Plot in CamaraH ---
+#' ## --- Read the Q99 HEAT percentile of White Adipocytes ---
+#' 
+## ------------------------------------------------------------------------------------------------------------------------------------------
+wad_HEAT_percentile <- readRDS(HEAT_THRESHOLD_RDS)
+
+#' 
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Violin in All Cells
+gg_heat_vln_allcells <- ggplot(graph.data, aes(x = cell_type_short, y = sigScores, fill = cell_type_short)) +
+  geom_hline(yintercept = wad_HEAT_percentile, color = "black", linetype = "dashed", linewidth = 0.2) +
+  geom_jitter(aes(color = cell_type_short), width = 0.2, alpha = 0.5, size = 0.5, stroke = 0) +
+  geom_violin(trim = FALSE, color = "black", linewidth = 0.3) + # <- black border here
+theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "in")
+  ) +
+  labs(
+    title = "HEAT Signature score",
+    x = "Cell Type",
+    y = paste("HEAT Signature score\n(VISION)")
+  ) +
+  scale_fill_manual(values = palette.use) +
+  scale_color_manual(values = palette.use) +
+  NoLegend()
+
+#' 
+#' ## --- Plotting and save ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+gg_heat_vln_allcells
+
+scale <- 180
+ggsave(file.path(OUTPUT_DIR, "S2D_heat_vln_allcells.pdf"), plot = gg_heat_vln_allcells, width = 60, height = 32, units = "mm", bg = "white",  dpi = 600)
+
+#' 
+#' # --- Panel S2C. UCP1-correlated genes signature Feature Plot ---
+## ----fig.width=1.417323*4, fig.height=1.259843*4-------------------------------------------------------------------------------------------
+mm_to_in(c(36, 32))
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH", Hallmark == "UCP1 correlated") %>%
+  left_join(meta_simplified, by = "barcode")
+
+# Loop over the selected signatures=======
+gg_ucp1_corr_featplot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigScores)) +
+  geom_point(size = 0.1) +
+  scale_color_viridis_c(option = "viridis", name = "Signature score (VISION)") +
+  theme_nature_metabolism(base_size = 6 * 3) +
+  theme_no_axis() +
+  theme(legend.position = "bottom") +
+  theme(
+    legend.key.size = unit(1.5 * 3, "mm"),
+    legend.text = element_text(size = 4 * 3),
+    legend.title = element_text(size = 5 * 3)
+  ) +
+  labs(title = "UCP1-correlated genes\nSignature score")
+
+gg_ucp1_corr_featplot
+
+#' 
+#' 
+## ----fig.width=1.417323*4, fig.height=1.259843*4-------------------------------------------------------------------------------------------
+mm_to_in(c(36, 32))
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH", Hallmark == "UCP1 correlated") %>%
+  left_join(meta_simplified, by = "barcode")
+
+### Circle the brown adipocyte cluster
+brown <- graph.data %>%
+    distinct(barcode, .keep_all = TRUE) |> 
+  filter(cell_type == "Brown Adipocytes") %>%
+  select(umap_1, umap_2)
+
+# robust center
+cx <- median(brown$umap_1, na.rm = TRUE)
+cy <- median(brown$umap_2, na.rm = TRUE)
+
+# robust radius: e.g. 90% of points within the circle
+d <- sqrt((brown$umap_1 - cx)^2 + (brown$umap_2 - cy)^2)
+r <- quantile(d, 0.90, na.rm = TRUE) * 1.15  # +15% padding
+
+theta <- pi/4
+x_lab <- cx + 2 * r * cos(theta)
+y_lab <- cy + r * sin(theta)
+
+gg_ucp1_corr_featplot_annot <- gg_ucp1_corr_featplot +
+  annotate("path",
+           x = cx + r * cos(seq(0, 2*pi, length.out = 361)),
+           y = cy + r * sin(seq(0, 2*pi, length.out = 361)),
+           linewidth = 0.4,
+           color = "black") +
+  annotate("text",
+           x = x_lab, y = y_lab,
+           label = "BAds",
+           hjust = 0, vjust = 0,          # anchor text from lower-left
+           nudge_x = 0.1, nudge_y = 0.1,   # tweak for your UMAP scale
+           size = 5*3/.pt)
+
+#' 
+#' ## --- Plotting and save ---
+## ----fig.width=1.417323*4, fig.height=1.259843*4-------------------------------------------------------------------------------------------
+gg_ucp1_corr_featplot_annot
+
+# Save
+ggsave(file.path(OUTPUT_DIR, "S2C_ucp1_corr_vision_featplot.pdf"), plot = gg_ucp1_corr_featplot_annot, width = 36 * 3, height = 32 * 3, units = "mm", bg = "white",  dpi = 600)
+
+#' 
+#' # --- Panel S2E-H: Enrichr HEAT signature analysis ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# -----------------------------
+#  Load enriched paths 
+# -----------------------------
+enriched <- readRDS(ENRICHED_RDS)
+
+#' 
+#' ## --- Set formatting helper functions ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+dbs <- names(enriched)
+# 1) One-hue per DB, light -> dark.
+# Uses colorspace for good palette generation, but you can swap to RColorBrewer if you prefer.
+db_base_cols <- setNames(
+  colorspace::qualitative_hcl(length(dbs), palette = "Dark 3"),
+  dbs
+)
+
+mono_fill_scale_for_db <- function(db_name) {
+  base <- db_base_cols[[db_name]]
+  low  <- colorspace::lighten(base, amount = 0.90)
+  high <- colorspace::lighten(base,  amount = 0.45)
+
+  # Most enrichment plots map fill to P.value where smaller is "more significant".
+  # Reverse so smaller p gets darker.
+  scale_fill_gradient(low = low, high = high, trans = "reverse")
+}
+
+# 2) Keep existing coord system, but disable clipping.
+# If plot already uses coord_flip, we re-add coord_flip with clip='off' (same coord, no cropping).
+add_no_clip_coord <- function(p) {
+  if (inherits(p$coordinates, "CoordFlip")) {
+    p + coord_flip(clip = "off")
+  } else {
+    p + coord_cartesian(clip = "off")
+  }
+}
+
+# 3) Add extra space on the *continuous* axis, respecting coord_flip.
+add_continuous_expand <- function(p, mult = c(0.02, 0.35)) {
+  if (inherits(p$coordinates, "CoordFlip")) {
+    # When flipped, the continuous axis is usually y (Count, -log10(p), etc.)
+    p + scale_y_continuous(expand = expansion(mult = mult))
+  } else {
+    p + scale_x_continuous(expand = expansion(mult = mult))
+  }
+}
+
+# 4) Put pathway names "inside" the bars (visually) and left-aligned to the axis origin.
+# For coord_flip plots (common): x is Term (discrete), y is Count (continuous).
+# Place text at y=0, so after flipping it lands at x=0.
+add_inside_left_labels <- function(p, term_col = "Term", wrap_width = 25) {
+  p +
+    theme(
+      axis.text.y  = element_blank(),
+      axis.ticks.y = element_blank(),
+      plot.margin  = margin(t = 5.5, r = 5.5, b = 5.5, l = 5.5)
+    ) +
+    geom_text(
+      data = p$data,
+      aes(
+        x = .data[[term_col]],
+        y = 0,
+        label = stringr::str_wrap(.data[[term_col]], width = wrap_width)
+      ),
+      hjust = 0,
+      vjust = 0.5,
+      size = 5 / .pt,
+      inherit.aes = FALSE,
+      fontface = "bold"
+    )
+}
+
+#' 
+#' ## --- Plot ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+plot_list <- list()
+base_size <- 6
+
+for (database in dbs) {
+
+    plot_data <- enriched[[database]] %>%
+      mutate(
+        Term = str_remove_all(Term, "\\s*\\(.*"),
+        Term = str_wrap(Term, width = 100)
+      )
+
+    p <- plotEnrich(
+      plot_data,
+      showTerms = 5,
+      numChar = 500,
+      y = "Ratio",              # will auto-fallback to Count if needed (your warning)
+      orderBy = "P.value",
+      title = str_wrap(str_replace_all(database, "_", " "), width = 30)
+    ) +
+      theme_nature_metabolism(base_size) +
+      theme(legend.position = "right") +
+      mono_fill_scale_for_db(database)   # will replace existing fill scale (fine)
+
+    p <- p %>%
+      add_inside_left_labels(term_col = "Term", wrap_width = 45) %>%
+      add_no_clip_coord() %>%
+      add_continuous_expand(mult = c(0.02, 0.35))
+
+    print(p)
+    plot_list[[database]] <- p
+  }
+
+
+#' ## --- Plotting and save --- 
+## ----fig.width=2.834646*1.5, fig.height=2.519685-------------------------------------------------------------------------------------------
+mm_to_in(c(72, 64))
+for(pathway in names(plot_list)){
+  print(plot_list[[pathway]])
+  ggsave(file.path(OUTPUT_DIR, paste0("S2E_H_heat_enrichr_", pathway,".pdf")), plot = plot_list[[pathway]], width = 60, height = 32, units = "mm", bg = "white",  dpi = 600)
+
+}
+
+#' 
+#' 
+#' 
+#' # --- Panel 2D. Signature Score Violin Plot in Adipocytes - CamaraH ---
+#' ## --- Pivot signatures ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Set signatures of interest. This is dictate plotting order
+signatures_order <- c("HEAT", "FA METABOLISM", "OXPHOS", "BATLAS")
+
+graph.data <- sigscores_df %>%
+  filter(dataset == "CamaraH") %>%
+  mutate(
+    Hallmark = str_replace_all(Hallmark, "HALLMARK_", "H: "),
+    Hallmark = str_replace_all(Hallmark, "_", " "),
+    Hallmark = str_replace_all(Hallmark, "SIGNATURE", ""),
+    Hallmark = case_when(
+      str_detect(Hallmark, "OXIDATIVE PHOSPHORYLATION") ~ "H: OXPHOS",
+      str_detect(Hallmark, "FATTY ACID") ~ "H: FA METABOLISM",
+      str_detect(Hallmark, "G2M") ~ "H: G2M",
+      str_detect(Hallmark, "REACTIVE OXYGEN") ~ "H: ROS",
+      str_detect(Hallmark, "UNFOLDED PROTEIN") ~ "H: UPR",
+      TRUE ~ Hallmark
+    )
+  ) %>%
+  mutate(Hallmark = str_remove(Hallmark, "H: ")) %>% # Fix the introduced problem of adding the H: to identify Hallmark pathways
+  filter(Hallmark %in% signatures_order)
+
+graph.data |> distinct(Hallmark)
+sigscores_df |> distinct(Hallmark)
+
+
+#' ## --- Create plot data ---
+#' 
+## ----fig.width=2.834646, fig.height= 2.214567----------------------------------------------------------------------------------------------
+plot_data <- graph.data %>%
+  filter(
+    str_detect(cell_type, "Adipocytes"),
+    !str_detect(cell_type, "Pre")
+  ) %>%
+  mutate(Hallmark = str_wrap(Hallmark, 5)) %>%
+  left_join(meta_simplified, by = "barcode") %>%
+  mutate(Hallmark = factor(Hallmark,
+    level = str_wrap(
+      signatures_order, 5
+    )
+  ))
+
+#' 
+#' ## --- Create plot ---
+## ----fig.width=2.834646, fig.height= 2.214567----------------------------------------------------------------------------------------------
+# Violin in Adipocytes
+gg_vision_adipo_vln <- ggplot(
+  plot_data,
+  aes(x = cell_type_short, y = sigScores, fill = cell_type_short)
+) +
+  geom_jitter(aes(color = cell_type_short), width = 0.2, alpha = 0.5, stroke = 0, size = 1) +
+  geom_violin(trim = FALSE, color = "black", linewidth = 0.3) +
+  stat_compare_means(
+    method = "t.test",
+    comparisons = list(c("BAds", "WAds")),
+    label = "p.signif",
+    symnum.args = list(
+      cutpoints = c(0, 0.001, 0.05, 1),
+      symbols   = c("<0.001", "<0.05", "ns")
+    ),
+    size = 5 / 2.81, 
+    vjust = -0.3, 
+  ) +
+  theme_nature_metabolism() +
+  theme(
+    legend.position = "none",
+    strip.background = element_blank(),
+    strip.text = element_text(size = 6),
+  ) +
+  labs(
+    title = NULL,
+    x = NULL,
+    y = "Signature score",
+    fill = NULL,
+    color = NULL
+  ) +
+  scale_fill_manual(values = palette.use) +
+  scale_color_manual(values = palette.use) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.2))) +
+  facet_wrap(vars(Hallmark), ncol = 5)
+
+#' 
+#' ## --- Plotting and save ---
+## ----fig.width=3.149606, fig.height= 1.13189-----------------------------------------------------------------------------------------------
+mm_to_in(c(80, 28.75))
+gg_vision_adipo_vln
+
+scale <- 180
+ggsave(file.path(OUTPUT_DIR, "2D_vision_adipo_vln.pdf"), plot = gg_vision_adipo_vln, width = 80, height = 28.75, units = "mm", bg = "white",  dpi = 600)
+
+#' # --- Supp_Table - Cohen's effect size (d) ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# -----------------------------
+#  Calculate effect sizes 
+# -----------------------------
+
+results_list <- list()
+
+for (hallmark in unique(plot_data$Hallmark)) {
+
+  df <- plot_data |>
+    filter(Hallmark == hallmark) |>
+    select(score = sigScores, cell_type = cell_type_short)
+
+  # Means
+  stats <- df %>%
+    group_by(cell_type) %>%
+    summarise(mean = mean(score), sd = sd(score), n = n(), .groups = "drop")
+
+  mean_bad <- stats$mean[stats$cell_type == "BAds"]
+  mean_wad <- stats$mean[stats$cell_type == "WAds"]
+  
+        n_bad <- stats$n[stats$cell_type == "BAds"]
+  n_wad <- stats$n[stats$cell_type == "WAds"]
+
+
+  # Effect size
+  eff <- cohen.d(score ~ cell_type, data = df)
+
+  results_list[[hallmark]] <- data.frame(
+    feature = "gene_signature",
+    feature_name = hallmark,    
+    cohen_d = eff$estimate,
+    CI_low = eff$conf.int[1],
+    CI_high = eff$conf.int[2],
+    mean_BAds = mean_bad,
+    mean_WAds = mean_wad,
+         n_BAds = n_bad,
+    n_WAds = n_wad,
+    delta_mean = mean_bad - mean_wad,
+    level = "nuclei"
+
+  )
+  # -----------------------------
+  #  Sample-level effect size 
+  # -----------------------------
+  
+  df_sample_unfiltered <- plot_data |>
+  filter(Hallmark == hallmark) |>
+  group_by(sample, cell_type_short) |>
+  summarise(score = mean(sigScores), .groups = "drop") |> 
+  rename("cell_type" = "cell_type_short")
+  
+  # -----------------------------
+#  Filter data 
+# -----------------------------
+  df_sample <- df_sample_unfiltered |>
+    left_join(
+      plot_data |>
+          filter(Hallmark == hallmark) |>
+        group_by(sample) |>
+        count(cell_type_short),
+      by = c("sample", "cell_type" = "cell_type_short")
+    ) |>
+    filter(n > 10)
+
+  
+  # Means
+  stats <- df_sample %>%
+    group_by(cell_type) %>%
+    summarise(mean = mean(score), sd = sd(score), n = n(), .groups = "drop")
+
+  mean_bad <- stats$mean[stats$cell_type == "BAds"]
+  mean_wad <- stats$mean[stats$cell_type == "WAds"]
+  
+      n_bad <- stats$n[stats$cell_type == "BAds"]
+  n_wad <- stats$n[stats$cell_type == "WAds"]
+
+  # Sample effect size
+  eff <- cohen.d(score ~ cell_type, data = df_sample)
+
+  results_list[[paste0(hallmark,"_sample")]] <- data.frame(
+    feature = "gene_signature",
+    feature_name= hallmark,    
+    cohen_d = eff$estimate,
+    CI_low = eff$conf.int[1],
+    CI_high = eff$conf.int[2],
+    mean_BAds = mean_bad,
+    mean_WAds = mean_wad,
+         n_BAds = n_bad,
+    n_WAds = n_wad,
+    delta_mean = mean_bad - mean_wad,
+    level = "sample"
+  )
+  
+  
+}
+
+eff_size_table <- bind_rows(results_list)
+eff_size_table <- eff_size_table %>%
+  arrange(level, desc(cohen_d))
+
+eff_size_table <- eff_size_table %>%
+  mutate(effect_size_label = case_when(
+    cohen_d < 0.5 ~ "small",
+    cohen_d < 0.8 ~ "medium",
+    TRUE ~ "large"
+  ))
+
+eff_size_table
+
+write_csv(eff_size_table, file.path(OUTPUT_DIR, "effect_size_wad_bad.csv"), col_names = TRUE)
+
+#' 
+#' 
+#' # --- Panel 2E. Thermogenic Genes Violin Plot in Adipocytes - CamaraH ---
+#' ## --- Calculate stats ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+stats_df <- FindMarkers(s.object, ident.1 = "WAds", ident.2 = "BAds", group.by = "cell_type_short", test.use = "wilcox")
+
+#' 
+#' ## --- Add label information ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+plot_stats <- stats_df %>%
+  rownames_to_column("feature") %>%
+  mutate(
+    group2 = "WAds",
+    group1 = "BAds",
+    y.position = 5.5,
+    label = case_when(
+      p_val_adj < 0.001 ~ "<0.001",
+      TRUE ~ as.character(round(p_val_adj, 2))
+    ),
+    xmin = 0.5,
+    xmax = 1.5,
+    colors = ifelse(p_val_adj < 0.05, "red", "black"),
+  ) %>%
+  select(feature, group1, group2, y.position, label, colors)
+
+#' 
+#' ## --- Create Plot ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+### Define thermo genes
+thermo_genes <- c("EBF2", "PPARGC1A", "PRDM16", "UCP1")
+
+plot_stats_filtered <- plot_stats %>% filter(feature %in% thermo_genes)
+
+p <- VlnPlot(s.object, features = thermo_genes, group.by = "cell_type_short", stack = TRUE)
+graph.data <- p$data
+graph.data <- graph.data %>% filter(str_detect(ident, "WAds|BAds"))
+
+# Get unique values of 'ident' (group names)
+ident_levels <- as.character(unique(graph.data$ident))
+
+# Create all pairwise comparisons dynamically
+comparisons_list <- combn(ident_levels, 2, simplify = FALSE)
+
+# Plot Violin
+gg_thermo_genes_adipo_vln <- ggplot(graph.data, aes(x = ident, y = expression, fill = ident)) +
+  geom_jitter(aes(color = ident), width = 0.1, alpha = 0.5, stroke = 0, size = 1) +
+  geom_violin(trim = TRUE, color = "black", linewidth = 0.3, width = 1) +
+  theme_nature_metabolism() +
+  theme(
+    legend.position = "none",
+    axis.line = element_line(linewidth = 0.3),
+    strip.background = element_blank(),
+  ) +
+  labs(
+    title = NULL,
+    x = NULL,
+    y = "Gene expression",
+    fill = NULL,
+    color = NULL
+  ) +
+  scale_fill_manual(values = palette.use) +
+  scale_color_manual(values = palette.use) +
+  facet_wrap(vars(feature), ncol = 5) +
+    new_scale_color() +
+
+  stat_pvalue_manual(
+    plot_stats_filtered,
+    xmin = "group1",
+    xmax = "group2",
+    label = "label",
+    y.position = "y.position",
+    size = 5 / ggplot2::.pt,
+    color = "colors",
+    inherit.aes = FALSE # <- key line to prevent inheriting fill/color=ident
+  ) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.20)))
+
+#' 
+#' ## --- Plotting and save ---
+#' 
+## ----fig.width=2.805118, fig.height=1.131890-----------------------------------------------------------------------------------------------
+mm_to_in(c(71.25, 28.75))
+gg_thermo_genes_adipo_vln
+
+scale <- 180
+ggsave(file.path(OUTPUT_DIR, "2E_thermo_genes_adipo_vln.pdf"), plot = gg_thermo_genes_adipo_vln, width = 71.25, height = 28.75, units = "mm", bg = "white",  dpi = 600)
+
+#' # --- Supp_Table - Cohen's effect size (d) - Continued ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# -----------------------------
+#  Load data 
+# -----------------------------
+
+PSEUDO_CPM_CTS_RDS <- here("output/4.downstream_pipelines/de_analysis/data/CamaraH_pseudobulk_count_matrix_for_ggplot.rds")
+pseudobulk_exp <- read_rds(PSEUDO_CPM_CTS_RDS)
+
+#' 
+#' 
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# -----------------------------
+#  Filter data 
+# -----------------------------
+
+pseudobulk_exp_filtered <- pseudobulk_exp |> 
+  filter(cell_type_short %in% c("BAds", "WAds"),
+         gene %in% thermo_genes,
+         n_cells > 10) |> # Filter to a minimum of cells per sample
+  select(feature = gene, expression = cpm_log, ident = cell_type_short, sample)
+
+#' 
+#' 
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# -----------------------------
+#  Calculate Cohen's d 
+# -----------------------------
+
+if(!exists("results_list")){
+results_list <- list()
+}
+
+for (gene in thermo_genes) {
+
+  df <- graph.data |>
+    filter(feature == gene) |>
+    select(score = expression, cell_type = ident)
+
+  # Means
+  stats <- df %>%
+    group_by(cell_type) %>%
+    summarise(mean = mean(score), sd = sd(score), n = n(), .groups = "drop")
+
+  mean_bad <- stats$mean[stats$cell_type == "BAds"]
+  mean_wad <- stats$mean[stats$cell_type == "WAds"]
+  
+    n_bad <- stats$n[stats$cell_type == "BAds"]
+  n_wad <- stats$n[stats$cell_type == "WAds"]
+
+  # Effect size
+  eff <- cohen.d(score ~ cell_type, data = df)
+
+  results_list[[gene]] <- data.frame(
+    feature = "gene",
+    feature_name = gene,    
+    cohen_d = eff$estimate,
+    CI_low = eff$conf.int[1],
+    CI_high = eff$conf.int[2],
+    mean_BAds = mean_bad,
+    mean_WAds = mean_wad,
+         n_BAds = n_bad,
+    n_WAds = n_wad,
+    delta_mean = mean_bad - mean_wad,
+    level = "nuclei"
+
+  )
+  
+    # Sample effect size
+    df_sample <- pseudobulk_exp_filtered |>
+    filter(feature == gene) |>
+    select(score = expression, cell_type = ident)
+
+  # Means
+  stats <- df_sample %>%
+    group_by(cell_type) %>%
+    summarise(mean = mean(score), sd = sd(score), n = n(), .groups = "drop")
+
+  mean_bad <- stats$mean[stats$cell_type == "BAds"]
+  mean_wad <- stats$mean[stats$cell_type == "WAds"]
+  
+  n_bad <- stats$n[stats$cell_type == "BAds"]
+  n_wad <- stats$n[stats$cell_type == "WAds"]
+
+  eff <- cohen.d(score ~ cell_type, data = df_sample)
+
+  results_list[[paste0(gene,"_sample")]] <- data.frame(
+    feature = "gene",
+    feature_name = gene,    
+    cohen_d = eff$estimate,
+    CI_low = eff$conf.int[1],
+    CI_high = eff$conf.int[2],
+    mean_BAds = mean_bad,
+    mean_WAds = mean_wad,
+    n_BAds = n_bad,
+    n_WAds = n_wad,
+    delta_mean = mean_bad - mean_wad,
+    level = "sample"
+
+  )
+}
+
+eff_size_table <- bind_rows(results_list)
+eff_size_table <- eff_size_table %>%
+  arrange(level, desc(cohen_d))
+
+eff_size_table <- eff_size_table %>%
+  mutate(effect_size_label = case_when(
+    cohen_d < 0.5 ~ "small",
+    cohen_d < 0.8 ~ "medium",
+    TRUE ~ "large"
+  ))
+
+#' 
+#' ## --- Save Supp Table - Cohen's d ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+eff_size_table
+
+write_csv(eff_size_table, file.path(OUTPUT_DIR, "effect_size_wad_bad.csv"), col_names = TRUE)
+
+
+#' # --- Panel 3I-O. VISION HEAT ViolinPlot in different human snRNAseq ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Read the Q99 percentile
+wad_HEAT_percentile <- readRDS(HEAT_THRESHOLD_RDS)
+
+#' 
+#' ## --- Create plot data ---
+## ----fig.width = 7.086614, fig.height = 1.771654-------------------------------------------------------------------------------------------
+plot_data_sig_score <- sigscores_df %>%
+  filter(
+    Hallmark %in% c("HEAT"),
+    str_detect(cell_type, "Adipo"),
+    !str_detect(cell_type, "Adipoq"),
+    !str_detect(tolower(cell_type), "pre|progenitor"),
+    !str_detect(region, "Intermediate")
+)
+
+#' 
+#' ## --- Supp_Table - HEAT+ adipocyte percentage (%) ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+## Calculate separating brown and white adipocytes
+heat_positive_pct_per_cell <- plot_data_sig_score %>%
+  count(HEAT_positive = sigScores > wad_HEAT_percentile, cell_type, region, dataset) %>%
+  group_by(cell_type, region, dataset) %>%
+  mutate(props = round(n / sum(n) * 100, 1)) %>%
+  arrange(dataset, cell_type, region)
+
+dir.create(here(OUTPUT_DIR, "..", "supplemental_tables"), showWarnings = F, recursive = T)
+write_csv(heat_positive_pct_per_cell, 
+          here(OUTPUT_DIR, "..", "supplemental_tables","heat_positive_pct_per_cell.csv")
+          )
+
+## Calculate aggregating all adipocytes
+heat_positive_pct_per_sample <- plot_data_sig_score %>%
+  count(HEAT_positive = sigScores > wad_HEAT_percentile, dataset) %>%
+  group_by(dataset) %>%
+  mutate(props = round(n / sum(n) * 100, 1)) %>%
+  arrange(dataset)
+
+write_csv(heat_positive_pct_per_cell, here(OUTPUT_DIR, "..", "supplemental_tables","heat_positive_pct_per_dataset.csv"))
+
+#' 
+#' 
+#' ## --- Format plot data ---
+## ----fig.width = 7.086614, fig.height = 1.771654, warning = FALSE--------------------------------------------------------------------------
+
+plot_data_sig_score$dataset <- factor(plot_data_sig_score$dataset,
+  levels = c("CamaraH","AngueiraA","SunW","WangT","EfthymiouV","LazarescuO","Emont")
+)
+
+# Add plotting information
+plot_data_sig_score <- plot_data_sig_score |> 
+  mutate(publication = case_when(dataset == "CamaraH" ~ "This Study",
+                                            dataset == "AngueiraA" ~ "Angueira et al. 2021",
+                                            dataset == "SunW" ~ "Sun et al. 2020",
+                                            dataset == "WangT" ~ "Wang et al. 2024",
+                                            dataset == "EfthymiouV" ~ "Efthymiou et al. 2025",
+                                            dataset =="LazarescuO" ~ "Lazarescu et al. 2025",
+                                            dataset == "Emont" ~ "Emont et al. 2022",
+                                            TRUE ~ "Unknown"),
+          depot = case_when(dataset == "CamaraH" ~ "Cervical",
+                                            dataset == "AngueiraA" ~ "Perivascular",
+                                            dataset == "SunW" ~ "Cervical",
+                                            dataset == "WangT" ~ "Cervical",
+                                            dataset == "EfthymiouV" ~ "Abdominal",
+                                            dataset =="LazarescuO" ~ "Abdominal",
+                                            dataset == "Emont" ~ "Abdominal",
+                                            TRUE ~ "Unknown"),
+          cell_type_Region = interaction(cell_type, region_label, sep = " | ", drop = TRUE),
+         region_extension = str_remove(region_label, " .*"),
+         cell_type = case_when(str_detect(cell_type, "White") ~ "WAds",
+                               str_detect(cell_type, "Brown") ~ "BAds",
+                               TRUE ~ cell_type)) 
+
+# Create palette
+fill_color_palette <- plot_data_sig_score %>%
+  distinct(cell_type_dataset, fill_color) %>%
+  drop_na(fill_color) %>%
+  deframe()
+
+
+# Global y limits so every plot matches
+y_lim <- range(plot_data_sig_score$sigScores, na.rm = TRUE)
+
+#' 
+#' ## --- Set helper function to merge plots  ---
+## ----fig.width = 7.086614, fig.height = 1.771654, warning = FALSE--------------------------------------------------------------------------
+make_one <- function(d) {
+  df <- plot_data_sig_score %>% filter(dataset == d)
+  title_txt <- paste(unique(df$publication), collapse = ", ")
+  subtitle_txt <- paste(unique(df$depot), collapse = ", ")
+
+  ggplot(df, aes(x = region_extension, y = sigScores, fill = cell_type_dataset)) +
+    geom_rect(
+      data = data.frame(ymin = wad_HEAT_percentile),
+      aes(ymin = ymin),
+      xmin = -Inf, xmax = Inf, ymax = Inf,
+      fill = "indianred1", alpha = 0.1,
+      inherit.aes = FALSE
+    ) +
+    geom_rect(
+      data = data.frame(ymax = wad_HEAT_percentile),
+      aes(ymax = ymax),
+      xmin = -Inf, xmax = Inf, ymin = -Inf,
+      fill = "grey", alpha = 0.1,
+      inherit.aes = FALSE
+    )  +
+  geom_jitter(aes(color = cell_type_dataset),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.6),
+    shape = 21,
+    alpha = 0.5,
+    stroke = 0.1,
+    size = 1
+  ) +
+    geom_violin(trim = FALSE, color = "black", width = 0.8, linewidth = 0.3) +
+    geom_hline(yintercept = wad_HEAT_percentile, color = "firebrick",
+               linetype = "dashed", linewidth = 0.2) +
+    stat_compare_means(
+      method = "t.test",
+      comparisons = list(c("Brown Adipocytes", "White Adipocytes")),
+      label = "p.format", size = 4 / 2.81
+    ) +
+    facet_wrap(vars(cell_type), scales = "free_x") +
+    theme_nature_metabolism() +
+    theme(
+      legend.position = "right",
+      strip.background = element_blank(),
+      strip.text = element_text(face = "plain", size = 4),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+    ) +
+    labs(
+      title = subtitle_txt,
+      subtitle = title_txt,
+      x = NULL,
+      y = "Signature score",
+      fill = NULL,
+      color = NULL
+    ) +
+    scale_fill_manual(values = fill_color_palette) +
+    scale_color_manual(values = fill_color_palette) +
+    scale_y_continuous(limits = y_lim, 
+                       expand = expansion(c(0.25,0.25)), 
+                       # breaks = round(c(-1, 0, as.numeric(wad_HEAT_percentile), 2, 3, 4), 2)
+                       )
+} + guides(color = "none", fill = "none")
+
+#' 
+#' ## --- Plotting and save ---
+## ----fig.width = 7.086614, fig.height = 1.771654, warning = FALSE--------------------------------------------------------------------------
+mm_to_in(c(180,45))
+plots <- levels(plot_data_sig_score$dataset) %>%
+  set_names() %>%
+  map(make_one)
+
+x_counts <- plot_data_sig_score %>%
+  filter(!is.na(cell_type_Region)) %>%
+  group_by(dataset) %>%
+  summarise(n_x = n_distinct(cell_type_Region), .groups = "drop")
+
+plots <- levels(plot_data_sig_score$dataset) %>% map(make_one)
+
+widths <- x_counts$n_x
+widths <- c(4.8,2,2, 2.2, 4.5, 4.5,4.5)
+gg_heat_vlnplot_alldataset <- wrap_plots(plots, nrow = 1, widths = widths) +
+  theme(plot.tag = element_text(face = "bold", size = 6))
+
+gg_heat_vlnplot_alldataset
+
+ggsave(file.path(OUTPUT_DIR, "3I-O_heat_vlnplot_alldataset.pdf"), plot = gg_heat_vlnplot_alldataset, width = 180, height = 45, units = "mm", bg = "white",  dpi = 600)
+
+
+#' 
+#' # --- Panel S3D-I. VISION HEAT FeaturePlot in different human snRNAseq ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+
+publication_levels = c("Angueira et al. 2021", "Sun et al. 2020", "Wang et al. 2024","Efthymiou et al. 2025", "Lazarescu et al. 2025","Emont et al. 2022")
+
+top_frac <- 0.005      # top 0.5% as "signature+"
+rad_q    <- 0.90      # circle contains 90% of those signature+ cells
+pad      <- 2.5      # inflate radius by 15%
+
+df <- sigscores_df %>%
+  filter(Hallmark == "HEAT", publication %in% publication_levels, str_detect(cell_type, "^Adipocyte"), str_detect(cell_type, "Progenitor", negate = T))
+
+# Build circle parameters per dataset
+circles <- df %>%
+  group_by(publication) %>%
+  mutate(thr = quantile(sigScores, 1 - top_frac, na.rm = TRUE)) %>%
+  filter(sigScores >= thr) %>%
+  summarise(
+    cx = median(umap_1, na.rm = TRUE),
+    cy = median(umap_2, na.rm = TRUE),
+    r  = quantile(sqrt((umap_1 - median(umap_1, na.rm = TRUE))^2 +
+                       (umap_2 - median(umap_2, na.rm = TRUE))^2),
+                  rad_q, na.rm = TRUE) * pad,
+    .groups = "drop"
+  ) |> 
+  filter(publication %in% c("Angueira et al. 2021", "Efthymiou et al. 2025", "Sun et al. 2020"))
+  
+
+# Turn circle params into drawable paths
+circle_paths <- circles %>%
+  tidyr::crossing(t = seq(0, 2*pi, length.out = 361)) %>%
+  mutate(
+    x = cx + r * cos(t),
+    y = cy + r * sin(t)
+  )
+
+# Re-filter
+df <- sigscores_df %>%
+  filter(Hallmark == "HEAT", dataset != "CamaraH")  |> 
+  mutate(publication = factor(publication, levels = ))
+
+#Comment in if you want to have higher HEAT cells on top
+df <- df |> arrange(sigScores) 
+
+gg_heat_featplot_alldataset <- ggplot(df, aes(x = umap_1, y = umap_2, color = sigScores)) +
+  geom_point(size = 0.5, alpha = 0.7, stroke = 0) +
+  geom_path(
+    data = circle_paths,
+    aes(x = x, y = y, group = publication),
+    inherit.aes = FALSE,
+    linewidth = 0.4,
+    color = "black"
+  ) +
+  scale_color_viridis(
+    option = "viridis",
+    limits = c(-0.3, 2.6)
+  ) +
+  labs(
+    x = "UMAP Dimension 1",
+    y = "UMAP Dimension 2",
+    color = "HEAT Signature\nScore (VISION)"
+  ) +
+  theme_nature_metabolism() +
+  theme_no_axis() +
+  facet_wrap(vars(publication), ncol = length(sigscore_list), scales = "free")
+
+
+gg_heat_featplot_alldataset
+
+#' ## --- Plotting and save ---
+## ----fig.width = 6.377953, fig.height = 1.259843-------------------------------------------------------------------------------------------
+mm_to_in(c(162, 32))
+gg_heat_featplot_alldataset
+
+gg_heat_featplot_alldataset <- gg_heat_featplot_alldataset +
+  scale_color_gradientn(
+  colours = c("#F7F7F7", "#BDBDBD", "#6A51A3", "#D7301F"),
+  limits = c(-0.3, 2.6)
+)
+
+gg_heat_featplot_alldataset
+
+ggsave(file.path(OUTPUT_DIR, "S3D-I_heat_featplot_alldataset.pdf"), plot = gg_heat_featplot_alldataset, width = 180, height = 32, units = "mm", bg = "white",  dpi = 600)
+
+
+#' 
+#' # --- Panel S3J. In vitro HEAT singature expression ---
+#' ## Load heat signature
+## ------------------------------------------------------------------------------------------------------------------------------------------
+load(HEAT_SIGNATURE_RDATA) #Creates HEAT_signature
+
+#' 
+#' 
+#' ## --- A38 Cells - Plotting and save ---
+## ----fig.height = 2, fig.width = 3.5-------------------------------------------------------------------------------------------------------
+a38.cells <- read.xlsx(A38_CTS_CSV, rowNames = F) %>%
+  dplyr::select(-1, -transcript_id.s.)
+names(a38.cells) <- gsub("\\.", " ", names(a38.cells))
+
+a38.de.data <- a38.cells[!duplicated(a38.cells$Symbol) & !duplicated(a38.cells$Symbol, fromLast = TRUE), ] %>%
+  select(-1) %>%
+  remove_rownames() %>%
+  column_to_rownames(var = "Symbol") %>%
+  as.matrix()
+
+a38.metadata <- data.frame(
+  samples = colnames(a38.de.data),
+  separate = colnames(a38.de.data)
+) %>%
+  separate(col = separate, into = c("Type", "Diff_Day", "Sample"), sep = "-") %>%
+  mutate(Type = ifelse(Type == "A38 W", "A38 WAT", Type))
+
+heatmap <- as.matrix(a38.cells %>%
+  dplyr::filter(Symbol %in% c("UCP1", HEAT_signature)) %>%
+  select(
+    Symbol, 
+    "A38 WAT-D18-1", "A38 WAT-D18-2", "A38 WAT-D18-3",
+    "A38 BAT-D18-1", "A38 BAT-D18-2", "A38 BAT-D18-3"
+  ) %>%
+  column_to_rownames(var = "Symbol"))
+
+# Filter metadata to keep only selected samples
+a38.metadata <- a38.metadata[a38.metadata$samples %in% colnames(heatmap),]
+
+custom.order <- c("UCP1", sort(HEAT_signature))
+
+pdf(file.path(OUTPUT_DIR,"S3J_A38_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
+
+pheatmap::pheatmap(heatmap[custom.order, , drop = FALSE],
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  cellwidth = 12,
+  cellheight = 7.2,
+  fontsize = 7,
+  gaps_row = 1,
+  gaps_col = c(3),
+  legend = TRUE,
+  annotation_col = a38.metadata %>%
+    remove_rownames() %>%
+    column_to_rownames(var = "samples") %>%
+    select(1:2) %>%
+    mutate(Type = ifelse(Type == "A38 WAT", "A38 hWAd", "A38 hBAd")) %>%
+    mutate(Diff_Day = factor(Diff_Day, levels = c("D0", "D6", "D9", "D12", "D15", "D18"))),
+  annotation_colors = list("Diff_Day" = c("D0" = "grey", "D18" = "black"),
+                           "Type" = c("A38 hBAd" = "#b3575e", "A38 hWAd" = "#313594")),
+  scale = "row"
+)
+
+dev.off()
+
+grep("COB", a38.cells$Symbol, value = T)
+a38.cells |>  filter(Symbol %in% custom.order) |> select("Symbol", contains("D18"))
+
+a38.cells |> select(contains("A38")) |> colSums(na.rm = TRUE)
+
+#' 
+#' ## --- A41 Cells - Plotting and save ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+a41.cells <- read.xlsx(A41_CTS_CSV, rowNames = F) %>%
+  dplyr::select(-gene_id, -transcript_ids, -Species, -Name, -Description)
+
+a41.de.data <- a41.cells[!duplicated(a41.cells$Symbol) & !duplicated(a41.cells$Symbol, fromLast = TRUE), ] %>%
+  remove_rownames() |> 
+  column_to_rownames(var = "Symbol") %>%
+  as.matrix()
+
+a41.metadata <- data.frame(
+  samples = colnames(a41.de.data),
+  separate = colnames(a41.de.data)
+) %>%
+  separate(col = separate, into = c("Type", "Diff_Day", "Sample"), sep = "-")
+
+heatmap <- a41.cells %>%
+  dplyr::filter(Symbol %in% c("UCP1", HEAT_signature)) %>%
+  select(Symbol, 
+          "EV-D18-1_FPKM", "EV-D18-2_FPKM", "EV-D18-3_FPKM", 
+          "BAT-D18-1_FPKM", "BAT-D18-2_FPKM", "BAT-D18-3_FPKM") %>% 
+  column_to_rownames(var = "Symbol") %>%
+  as.matrix()
+
+custom.order <- c("UCP1", sort(HEAT_signature))
+
+pdf(file.path(OUTPUT_DIR,"S3J_A41_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
+pheatmap::pheatmap(heatmap[custom.order, , drop = FALSE],
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  cellwidth = 12,
+  cellheight = 7.2,
+  fontsize = 6,
+  gaps_row = 1,
+  gaps_col = c(3),
+  legend = TRUE,
+  annotation_col = a41.metadata %>%
+    filter(samples %in% colnames(heatmap)) %>%
+    column_to_rownames(var = "samples") %>%
+    select(1:2) %>%
+    mutate(Type = ifelse(Type == "EV", "A41 hWAd", "A41 hBAd")) %>%
+    mutate(Diff_Day = factor(Diff_Day, levels = c("D0", "D9", "D12", "D18"))),
+    annotation_colors = list("Diff_Day" = c("D9" = "grey", "D18" = "black"),
+                           "Type" = c("A41 hBAd" = "#b3575e", "A41 hWAd" = "#313594")),
+
+  scale = "row"
+)
+dev.off()
+a41.cells |>  filter(Symbol %in% custom.order) |> select("Symbol", contains("D18")) |> select(!contains("OE"))
+
+
+#' 
+#' ## --- Cero et al. 2023 - Plotting and save ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+cero <- read.xlsx(CERO_CTS_XLSX)
+
+cero_mtx <- cero %>%
+  column_to_rownames(var = "Name") %>%
+  select(contains("d30.CPM")) %>%
+  as.matrix()
+
+cero_metadata <- data.frame(
+  samples = colnames(cero_mtx),
+  separate = colnames(cero_mtx)
+) %>%
+  separate(col = separate, into = c("Type", "Diff_Day", "Count_Type", "Replicate"), sep = "\\.")
+
+heatmap <- cero_mtx 
+
+custom.order <- c("UCP1", sort(HEAT_signature))
+
+pdf(file.path(OUTPUT_DIR,"S3J_cero_heat_heatmap.pdf"), width = mm_to_in(25), height = mm_to_in(90))
+pheatmap::pheatmap(heatmap[custom.order, , drop = FALSE],
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  cellwidth = 12,
+  cellheight = 7.2,
+  fontsize = 6,
+  gaps_row = 1,
+  gaps_col = c(4),
+  legend = TRUE,
+  annotation_col = cero_metadata %>%
+    filter(samples %in% colnames(heatmap)) %>%
+    column_to_rownames(var = "samples") %>%
+    select(1:2) %>%
+    mutate(Diff_Day = factor(toupper(Diff_Day), levels = c("D0", "D30"))),
+    annotation_colors = list("Diff_Day" = c("D0" = "grey", "D30" = "black"),
+                           "Type" = c("hBA" = "#b3575e", "hWA" = "#313594")),
+
+  scale = "row"
+)
+dev.off()
+
+#' 
+#' # --- Panel S3K-M. Angueira Adipocyte Subset ---
+#' ## --- Load files ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Load Seurat
+s.object.angueira.sub <- readRDS(ANGUEIRA_ADIPO_SUB_RDS)
+
+# Load UCP1 correlation
+ucp1_v_sigscores <- read_csv(ANGUEIRA_HEATvUCP1_CSV)
+
+#' 
+#' ## --- Setup common plotting parameters ---
+## ----fig.width=5.708661, fig.height=1.265467-----------------------------------------------------------------------------------------------
+mm_to_in(c(145, 225 / 7))
+# Assing plot dimensions
+width <- 30
+height <- 25
+
+# Rename adipocytes
+meta <- s.object.angueira.sub@meta.data
+meta <- meta |> mutate(
+  adipo_cell_type = paste0("hAd", seurat_clusters),
+  adipo_cell_type = factor(adipo_cell_type, levels = paste0("hAd", 0:4))
+)
+s.object.angueira.sub@meta.data <- meta
+
+# Reassign idents
+Idents(s.object.angueira.sub) <- "adipo_cell_type"
+
+#' 
+#' ## ---- Set color palette ----
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Select a monochromatic palette
+pal <- brewer.pal(5, "Oranges")
+
+#' 
+#' # --- Panel S3K. Adipocyte UCP1 x HEAT correlation - Angueira et al 2021 ---
+#' ## --- Plotting and save ---
+## ----fig.width=1.417323, fig.height=1.968504-----------------------------------------------------------------------------------------------
+mm_to_in(c(width, height*2))
+# Filter df to run correlation only in cells expressing UCP1
+df_filt <- ucp1_v_sigscores |> filter(UCP1 > 0)
+
+gg_angueira_correlation <- ggplot() +
+  geom_point(
+    data = ucp1_v_sigscores,
+    aes(UCP1, sigScores),
+    size = 1, stroke = 0.3, alpha = 0.25, color = pal[1]
+  ) +
+  geom_smooth(
+    data = df_filt,
+    aes(UCP1, sigScores),
+    method = "lm", se = TRUE, color = pal[3], fill = pal[3], linewidth = 0.3
+  ) +
+  stat_cor(
+    data = df_filt,
+    aes(UCP1, sigScores),
+    method = "pearson",
+    digits = 2,
+    size = 6 / .pt,
+    color = "black",
+    label.x = -Inf, label.y = Inf, hjust = -0.1, vjust = 1.2,
+    p.accuracy = 0.01
+  ) +
+  theme_nature_metabolism() +
+  labs(
+    title = "HEAT Score x UCP1",
+    subtitle = "Angueira et al. 2021 - Adipocytes",
+    y = str_wrap("HEAT Signature Score (VISION)", width = 20),
+    x = "UCP1 expression"
+  ) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.1)))
+
+gg_angueira_correlation
+
+
+ggsave(file.path(OUTPUT_DIR, "S3K_heat_ucp1_corr_anguieira.pdf"), bg = "white", width = width, height = height, units = "mm", dpi = 600)
+
+#' ## --- Register N  for correlations ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+s.object.angueira.sub@meta.data |> count(adipo_cell_type)
+
+corr_used_adipocytes <- ucp1_v_sigscores |> count(cell_type, UCP1 > 0)
+corr_used_adipocytes
+
+#' 
+#' # --- Panel S3L. Adipocyte UMAP - Angueira et al 2021 ---
+#' ## --- Plotting and save ---
+## ----fig.width=1.417323 * 4, fig.height=0.984252 * 4---------------------------------------------------------------------------------------
+mm_to_in(c(width, height))
+
+scale_factor <- 4
+gg_angueira_umap <- UMAPPlot(s.object.angueira.sub, cols = pal, pt.size = 0.1) + labs(title = "Angueira et al. 2021", subtitle = "Adipocyte subtypes") + theme_nature_metabolism(base_size = 6 * scale_factor) + theme_no_axis()
+ggsave(file.path(OUTPUT_DIR, "S3L_angueira_adipo_subset_umap.pdf"), plot = gg_angueira_umap, bg = "white", width = width * scale_factor, height = height * scale_factor, units = "mm", dpi = 600)
+
+gg_angueira_umap
+
+#' # --- Panel S3M. Adipocyte ViolinPlot - Angueira et al 2021 ---
+#' ## --- Plotting and save ---
+## ----fig.width=1.417323, fig.height=0.984252-----------------------------------------------------------------------------------------------
+gg_angueira_violin <- VlnPlot(s.object.angueira.sub, features = c("ADIPOQ", "UCP1", "HEAT"), flip = T, stack = T, fill.by = "ident", cols = pal) + theme_nature_metabolism() + theme(
+  strip.text = element_text(size = 3),
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+  axis.title.x = element_blank()
+) +
+  NoLegend()
+ggsave(file.path(OUTPUT_DIR, "S3M_angueira_adipo_subset_feat_heat.pdf"), plot = gg_angueira_violin, bg = "white", width = width, height = height, units = "mm", dpi = 600)
+gg_angueira_violin
+
+#' 
+#' ## --- Supp_Table - HEAT+ adipocyte percentage (%) - Continued ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Count proportions of heat-positive cells per subcluster
+meta <- s.object.angueira.sub@meta.data
+angueira_heat_positive_pct <- meta %>%
+  count(heat_positive, adipo_cell_type) %>%
+  group_by(adipo_cell_type) %>%
+  mutate(props = round(n / sum(n) * 100, 1))
+
+angueira_heat_positive_pct
+
+# Harmonize to match with heat_positive_pct_per_cell (Calculated above)
+colnames(heat_positive_pct_per_cell)
+colnames(angueira_heat_positive_pct)
+
+angueira_heat_positive_pct <- angueira_heat_positive_pct |>
+  rename(
+    "HEAT_positive" = "heat_positive",
+    "cell_type" = "adipo_cell_type"
+  ) |>
+  mutate(region = "perivasc", dataset = "AngueiraA")
+
+heat_positive_pct_per_cell_merged <- rbind(heat_positive_pct_per_cell, angueira_heat_positive_pct) |> arrange(dataset, region, cell_type)
+heat_positive_pct_per_cell_merged
+
+# Save
+dir.create(here(OUTPUT_DIR, "..", "supplemental_tables"), showWarnings = F, recursive = T)
+write_csv(heat_positive_pct_per_cell_merged, here(OUTPUT_DIR, "..", "supplemental_tables","heat_positive_pct_per_cell.csv"))
+
+
+#' # --- Panel S3N-O. VISION in mouse dataset ---
+#' ## --- Load files ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Load files
+sigscore_shamsi <- read_csv(SHAMSI_VISON_SIG)
+shamsi_rds <- readRDS(SHAMSI_RDS)
+
+# Merge signature in the object
+sigscore_shamsi <- sigscore_shamsi |> filter(Hallmark == "Mouse_HEAT")
+if (all(sigscore_shamsi$barcode == rownames(shamsi_rds@meta.data))) {
+  shamsi_rds$mouse_heat <- sigscore_shamsi$sigScores
+}
+
+ucp1_shamsi <- FetchData(shamsi_rds, vars = "Ucp1", layer = "data")
+ucp1_v_sigscores <- sigscore_shamsi |> left_join(ucp1_shamsi |> rownames_to_column("barcode"), by = "barcode")
+
+#' ## --- Add non-adipocyte subgroup ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+shamsi_rds@meta.data <- shamsi_rds@meta.data |> mutate(cell_type_custom = ifelse(cell_type =="Adipocytes", "Adipocytes", "Non-Adipocytes"))
+
+#' 
+#' ## --- Define color palettes ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+shamsi_palette <- c(
+  "Pdgfra_APC" = "#8bbe9b",
+  "Lymph_EC" = "#cc9fd7",
+  "EC" = "#dfa9c1",
+  "Macrophages" = "#0461cf",
+  "Pericytes" = "#e0641c",
+  "VSM" = "#fbb294",
+  "NMSC" = "#f02943",
+  "MSC" = "#f79399",
+  "Adipocytes" = "#ffe65a",
+  "Non-Adipocytes" = "grey75"
+)
+
+shamsi_palette_low  <- colorspace::lighten(shamsi_palette, amount = 0.60)
+shamsi_palette_high <- colorspace::darken(shamsi_palette,  amount = 0.15)
+
+#' 
+#' 
+#' # --- Panel S3N. Adipocyte UCP1 x HEAT correlation - Shamsi et al 2023 ---
+#' ## --- Plotting and save ---
+## ----fig.width=1.377953, fig.height=1.265467-----------------------------------------------------------------------------------------------
+ucp1_v_sigscores
+mm_to_in(c(35, 225 / 7))
+# Filter df to run correlation only in cells expressing UCP1
+df_filt <- ucp1_v_sigscores |> filter(Ucp1 > 0, cell_type %in% c("Brown adipocytes", "Adipocytes"), Hallmark == "Mouse_HEAT")
+pal <- brewer.pal(3, "Oranges")
+gg_shamsi_correlation <- ggplot() +
+  geom_point(
+    data = df_filt,
+    aes(Ucp1, sigScores, ),
+    size = 1, stroke = 0.3, alpha = 0.25,
+    color = shamsi_palette_low[["Adipocytes"]]
+  ) +
+  geom_smooth(
+    data = df_filt,
+    aes(Ucp1, sigScores),
+    method = "lm", se = TRUE, linewidth = 0.3, color = shamsi_palette[["Adipocytes"]], fill = shamsi_palette[["Adipocytes"]]
+  ) +
+  stat_cor(
+    data = df_filt,
+    aes(Ucp1, sigScores),
+    method = "pearson",
+    digits = 2,
+    size = 6 / .pt,
+    color = "black", 
+    label.x = -Inf, label.y = Inf, hjust = -0.1, vjust = 1.2, p.accuracy = 0.01) +
+  theme_nature_metabolism() +
+  labs(
+    title = "HEAT Score x UCP1",
+    subtitle = "Shamsi et al. 2023 - Mouse Adipocytes",
+    y = str_wrap("HEAT Signature Score (VISION)",width = 20),
+    x = "UCP1 expression"
+  ) +
+  scale_y_continuous(expand = expansion(c(0.05, 0.1))) +
+  NoLegend()
+
+gg_shamsi_correlation
+
+
+ggsave(file.path(OUTPUT_DIR, "S3N_heat_ucp1_corr_shamsi.pdf"), bg = "white", width = width, height = height, units = "mm", dpi = 600)
+
+## ------------------------------------------------------------------------------------------------------------------------------------------
+shamsi_rds@meta.data |> count(cell_type_custom)
+
+corr_used_adipocytes <- ucp1_v_sigscores |> filter(cell_type %in% c("Brown adipocytes", "Adipocytes"), Hallmark == "Mouse_HEAT") |> count(Ucp1 > 0)
+corr_used_adipocytes
+
+#' 
+#' # --- Panel S3O. Adipocyte UMAP - Shamsi et al 2023 ---
+#' ## --- Plotting and save ---
+## ----fig.width=3.779528, fig.height=2.952756-----------------------------------------------------------------------------------------------
+mm_to_in(c(width*3, height*3))
+# rEassing identities
+Idents(shamsi_rds) <-"cell_type_custom"
+
+# Plot
+a <- UMAPPlot(shamsi_rds, pt.size = 0.5, cols = shamsi_palette) + theme_nature_metabolism(base_size = 6 *3) + theme_no_axis() + labs(title = "Shamsi et al. 2023", subtitle = "Mouse iBAT") + theme(legend.position = "bottom", legend.text = element_text(size = 5 * 3))
+a
+# Save
+ggsave(file.path(OUTPUT_DIR, "S3O_shamsi_umap.pdf"), plot = a, bg = "white", width = width*3, height = height*3, units = "mm", dpi = 600)
+
+#' 
+#' 
+#' # --- Panel S3P. Adipocyte ViolinPlot - Shamsi et al 2023 ---
+#' ## --- Plotting and save ---
+## ----fig.width=1.417323, fig.height=1.259843-----------------------------------------------------------------------------------------------
+mm_to_in(c(36,32))
+if("mouse_heat" %in% colnames(shamsi_rds@meta.data)){
+shamsi_rds@meta.data <- shamsi_rds@meta.data |> rename("mHEAT" = "mouse_heat")
+}
+
+Idents(shamsi_rds) <- factor(Idents(shamsi_rds), levels = c("Adipocytes", "Non-Adipocytes"))
+
+d <- VlnPlot(shamsi_rds, features = c("Adipoq", "Ucp1", "mHEAT"), flip = T, stack = T, fill.by = "ident", cols = shamsi_palette) + theme_nature_metabolism() + theme(
+  strip.text = element_text(size = 3),
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+  axis.title.x = element_blank()
+) +
+  NoLegend()
+d
+
+ggsave(file.path(OUTPUT_DIR, "S3P_shamsi_violin.pdf"), plot = d, bg = "white", width = width, height = height, units = "mm", dpi = 600)
+
+
+#' 
+#' # --- Panel 3A-D. ssGSEA vs UCP1 in bulkRNAseq ---
+#' ## --- Load the ssGSEA data
+## ------------------------------------------------------------------------------------------------------------------------------------------
+#--- Determine files to loop over
+# Results files
+files <- list.files(GSEA_HEAT_BULK_DIR, full.names = TRUE)
+SSGSEA_FILES <- grep("HEATvUCP1.csv", files, value = TRUE)
+
+
+# Define dataset names
+dataset_names <- c("Castella", "Din", "Gavrila", "Giroud", "Ohja")
+
+#' 
+## ------------------------------------------------------------------------------------------------------------------------------------------
+## Create data frame to map names
+dataset_keys <- data.frame(
+  dataset_name = c("Castella", "Din", "Gavrila", "Giroud", "Ohja"),
+  full_name = c("Castella et al. 2023", "Din et al. 2018", "Salej Duran et al. 2025", "Giroud et al. 2023", "Ojha et al. 2016")
+) |> column_to_rownames("dataset_name")
+
+#' 
+#' ## --- Define Color Palettes ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+neck.color
+dev_age_color <- c("Child" = "orchid4", "Infant" = "orchid3", "Neonate" = "orchid1")
+pheo_color <- c("control" = "grey25", "pheochromocytoma" = "darkgreen", "Control" = "grey25", "Pheo" = "darkgreen")
+
+color_palette_gsea_bulk <- c(neck.color, dev_age_color, pheo_color)
+
+#' 
+#' ## --- Plotting ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+corrplot_list <- list()
+plot_data_list <- list()
+
+# Filter out Sondergaard
+dataset_names <- grep("Sondergaard", dataset_names, ignore.case = TRUE, invert = TRUE, value = TRUE)
+# Loop over each sample and plot data
+for (dataset in dataset_names) {
+  ucp1vHEAT <- read.csv(str_subset(SSGSEA_FILES, dataset))
+  ucp1vHEAT <- ucp1vHEAT %>%
+    rename("group" = "X.") %>%
+    mutate(
+      group = str_replace(group, "pheochromocytoma", "Pheo"),
+      group = str_replace(group, "control", "Control")
+    )
+  if (dataset == "ojha") {
+    ucp1vHEAT <- ucp1vHEAT %>%
+      mutate(group = factor(group, levels = c("Neonate", "Infant", "Child")))
+  }
+  
+  plot_data_list[[dataset]] <- ucp1vHEAT |> count(group)
+  write_csv(plot_data_list[[dataset]], file.path(OUTPUT_DIR, paste0(dataset,"_bulk_ssgsea_heat_n.csv")))
+
+  # --- Plotting HEAT vs UCP1 ---
+  gg_2 <- ggplot(
+  ucp1vHEAT,
+  aes(x = HEAT, y = log10(UCP1 + 1), color = group)
+) +
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    linetype = "dashed",
+    linewidth = 0.1,
+    se = FALSE,
+    show.legend = FALSE
+  ) +
+  stat_cor(
+    method = "pearson",
+    label.x.npc = "left",
+    label.y.npc = "top",
+    aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")),
+    size = 4 / 2.81
+  ) +
+  geom_point(size = 1) +
+  theme_nature_metabolism() +
+  theme(legend.position = "top") +
+  scale_color_manual(values = color_palette_gsea_bulk) +
+  labs(
+    x = "HEAT Score (ssGSEA)",
+    y = expression(log[10](UCP1 + 1)),
+    title = dataset_keys[dataset,]
+  )
+  
+  
+  print(gg_2)
+
+  corrplot_list[[dataset]] <- gg_2
+}
+
+#' 
+#' ## --- Save plot ---
+## ----fig.width=7.086614, fig.height= 1.771654, warning=FALSE-------------------------------------------------------------------------------
+# Wrap and save
+gg_heat_bulk_corrplot <- wrap_plots(corrplot_list[c("Gavrila", "Din", "Ohja", "Castella")], ncol = 4)
+gg_heat_bulk_corrplot
+scale <- 180
+ggsave(file.path(OUTPUT_DIR, "3A-D_heat_ucp1_bulk_corrplot.pdf"), plot = gg_heat_bulk_corrplot, width = 180, height = 225 / 5, units = "mm", bg = "white",  dpi = 600)
+
+
+#' # --- Panel 3E-H. ssGSEA vs CKMT2 in bulkRNAseq ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+boxplots_list <- list()
+corrplot_list <- list()
+
+# Filter out Sondergaard
+dataset_names <- grep("Sondergaard", dataset_names, ignore.case = TRUE, invert = TRUE, value = TRUE)
+# Loop over each sample and plot data
+for (dataset in dataset_names) {
+  ucp1vHEAT <- read.csv(str_subset(SSGSEA_FILES, dataset))
+  ucp1vHEAT <- ucp1vHEAT %>%
+    rename("group" = "X.") %>%
+    mutate(
+      group = str_replace(group, "pheochromocytoma", "Pheo"),
+      group = str_replace(group, "control", "Control")
+    )
+  if (dataset == "ojha") {
+    ucp1vHEAT <- ucp1vHEAT %>%
+      mutate(group = factor(group, levels = c("Neonate", "Infant", "Child")))
+  }
+  # --- Plotting HEAT vs CKMT2 ---
+    gg_2 <- ggplot(
+  ucp1vHEAT,
+  aes(x = HEAT, y = log10(CKMT2 + 1), color = group)
+) +
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    linetype = "dashed",
+    linewidth = 0.1,
+    se = FALSE,
+    show.legend = FALSE
+  ) +
+  stat_cor(
+    method = "pearson",
+    label.x.npc = "left",
+    label.y.npc = "top",
+    aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")),
+    size = 4 / 2.81
+  ) +
+  geom_point(size = 1) +
+  theme_nature_metabolism() +
+  theme(legend.position = "top") +
+  scale_color_manual(values = color_palette_gsea_bulk) +
+  labs(
+    x = "HEAT Score (ssGSEA)",
+    y = expression(log[10](CKMT2 + 1)),
+    title = dataset_keys[dataset,]
+  )
+  
+  
+  print(gg_2)
+
+  corrplot_list[[dataset]] <- gg_2
+}
+
+#' 
+#' ## --- Save plot ---
+## ----fig.width=7.086614, fig.height= 1.771654, warning=FALSE-------------------------------------------------------------------------------
+# Wrap and save
+gg_heat_bulk_corrplot <- wrap_plots(corrplot_list[c("Gavrila", "Din", "Ohja", "Castella")], ncol = 4)
+gg_heat_bulk_corrplot
+scale <- 180
+ggsave(file.path(OUTPUT_DIR, "3E-H_heat_ckmt2_bulk_corrplot.pdf"), plot = gg_heat_bulk_corrplot, width = 180, height = 225 / 5, units = "mm", bg = "white",  dpi = 600)
+
+
+#' 
+#' # --- Panel S3A. Heatmap HEAT signature - Sondergaard et al 2014 ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+expression_matrix <- read_rds(PARAGANG_BULK_MTX_RDS)
+
+pdf(file.path(OUTPUT_DIR, "S3A_paragang_heatmap.pdf"), height = mm_to_in(180), width = mm_to_in(45))
+# Create heatmap
+pheatmap::pheatmap(expression_matrix,
+  scale = "row", # Normalize rows (genes)
+  clustering_distance_rows = "euclidean", # Clustering for rows
+  cellwidth = 5,
+  cellheight = 5,
+  fontsize = 6,
+  clustering_distance_cols = "euclidean", # Clustering for columns
+  clustering_method = "complete", # Hierarchical clustering method
+  treeheight_row = 0.5, treeheight_col = 0.5
+)
+dev.off()
+
+pheatmap::pheatmap(expression_matrix,
+  scale = "row", # Normalize rows (genes)
+  clustering_distance_rows = "euclidean", # Clustering for rows
+  cellwidth = 5,
+  cellheight = 5,
+  fontsize = 6,
+  clustering_distance_cols = "euclidean", # Clustering for columns
+  clustering_method = "complete", # Hierarchical clustering method
+)
+
+#' 
+#' # --- Panel S3B. Heatmap HEAT signature - Castella et al 2023 ---
+#' ## --- Format dataset names ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+## Create data frame to map names
+dataset_keys <- data.frame(
+  dataset_name = c("Castella", "Din", "Gavrila", "Giroud", "Ohja"),
+  full_name = c("Castella et al. 2023", "Din et al. 2018", "Salej Duran et al. 2025", "Giroud et al. 2023", "Ojha et al. 2016")
+) |> column_to_rownames("dataset_name")
+
+#' 
+#' ## --- Load HEAT_signature ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Load HEAT signature
+load(HEAT_SIGNATURE_RDATA) # This creates object "HEAT_signature"
+
+#' 
+#' ## --- List files ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+#--- Determine files to loop over
+# Expression files
+exp_files <- list.files(BULK_DIR, full.names = TRUE)
+cleaned_files <- grep("_Cleaned.csv$", exp_files, value = TRUE)
+
+#Metadata files
+meta_files <- list.files(BULK_META_DIR, full.names = TRUE)
+
+#Define dataset names
+dataset_names <- c("Castella")
+
+#' 
+#' ## --- Plotting and save ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+for(dataset in dataset_names){
+ 
+  # --- Read in the data ---
+  object <- read.csv(str_subset(cleaned_files, dataset), header = TRUE, row.names = 1)
+  
+  meta <- read.csv(str_subset(meta_files, dataset))
+  
+  meta$group <- factor(meta$group, levels = unique(meta$group[order(meta$order)]))
+  rownames(meta) <- meta$sample
+  
+  meta <- meta %>% select(group) |> mutate(group = case_when(
+    grepl("WAT|SC", rownames(meta)) ~ "Superficial",
+    grepl("BAT|Deep", rownames(meta)) ~ "Deep",
+    TRUE ~ group
+  ))
+
+  
+  # Reorder
+  UCP1_exp <- object["UCP1", ] |> 
+    t() |> 
+    as.data.frame( ) |> 
+    rownames_to_column("sample") |> 
+    left_join(meta |> rownames_to_column("sample"), by = "sample") 
+  col_order <- UCP1_exp |> 
+    arrange(group, UCP1) |> 
+    pull(sample)
+
+  
+  heatmap <- object[,col_order] %>%
+    as.matrix()
+  
+  #Colors
+  dev_age_color <- c("Child" = "orchid4", "Infant" = "orchid3", "Neonate" = "orchid1")
+  pheo_color <- c("control" = "grey25", "pheochromocytoma" = "darkgreen", "Control" = "grey25", "Pheo" = "darkgreen")
+  annotation_colors <- list(group = c(neck.color, dev_age_color, pheo_color))
+  
+  annotation_colors$group <- annotation_colors$group[names(annotation_colors$group) %in% meta$group]
+  
+  custom.order <- c("UCP1", sort(HEAT_signature))
+  custom.order <- custom.order[custom.order %in% rownames(heatmap)]
+  
+  
+  # -----------------------------
+  #  Save plot as pdf 
+  # -----------------------------
+  
+  pdf(file.path(OUTPUT_DIR, paste("S3B", dataset, "HEAT_heatmap.pdf", sep= "_")), width = mm_to_in(50), height = mm_to_in(90))
+  # # --- Plot heatmap ---
+  mat <- heatmap[custom.order, , drop = FALSE]
+
+  print(pheatmap::pheatmap(mat,
+           cluster_cols = FALSE,
+           cluster_rows = FALSE,
+           cellwidth = 6,
+           cellheight = 5,
+           fontsize = 6,
+           gaps_row = 1,
+           gaps_col = 3,
+           show_colnames = FALSE,
+           legend = TRUE,  
+           annotation_legend = FALSE,
+           annotation_col = meta,
+           annotation_colors = annotation_colors,
+           annotation_names_col = FALSE,
+           scale = "row",
+          main = dataset_keys[dataset,]
+))
+  dev.off()
+  
+  # -----------------------------
+  #  Print in file 
+  # -----------------------------
+  
+  print(pheatmap::pheatmap(mat,
+           cluster_cols = FALSE,
+           cluster_rows = FALSE,
+           cellwidth = 6,
+           cellheight = 5,
+           fontsize = 6,
+           gaps_row = 1,
+           gaps_col = 3,
+           show_colnames = FALSE,
+           legend = TRUE,  
+           annotation_legend = FALSE,
+           annotation_col = meta,
+           annotation_colors = annotation_colors,
+           annotation_names_col = FALSE,
+           scale = "row",
+          main = dataset_keys[dataset,]
+))
+
+
+}
+
+
+#' 
+#' 
+#' # --- Panel S3C. CIBERSORT ---
+#' ## --- Load CIBERSORT data ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Load output from X.02.X.CIBERSORTx
+combined_data_with_meta <- read.csv(CIBERSORT_PROPS_CSV)
+
+#' 
+#' ## --- Create plots ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Plotting according to the datasets
+plot_list <- list()
+for (dataset in unique(combined_data_with_meta$Dataset)) {
+  # Filter the data
+  plot_data <- combined_data_with_meta %>%
+    dplyr::filter(
+      Cell_type == "Brown_adipocyte",
+      Dataset == dataset
+    )
+
+
+  ## --- Define Color Palettes ---
+  neck.color
+  dev_age_color <- c("Child" = "orchid4", "Infant" = "orchid3", "Neonate" = "orchid1")
+  pheo_color <- c("control" = "grey25", "pheochromocytoma" = "darkgreen", "Control" = "grey25", "Pheo" = "darkgreen")
+
+  color_palette_gsea_bulk <- c(neck.color, dev_age_color, pheo_color)
+
+  ## --- Format the plot title ---
+  plot_title <-dataset_keys[dataset, ]
+  # plot_title <- str_replace(plot_title, "et", "\net") #Scape if needed
+
+  # Generate the plot
+  p <- ggplot(plot_data, aes(x = Depot, y = Proportions, fill = Depot)) +
+    geom_boxplot(alpha = 0.4, outlier.shape = NA, color = "black", width = 0.4, linewidth = 0.3) +
+    geom_jitter(position = position_jitterdodge(jitter.width = 0), size = 0.5, shape = 21, color = "black", stroke = 0.3) + # Jittered points
+    theme_classic() +
+    theme(
+      axis.title.x = element_blank(),
+      plot.title = element_text(hjust = 0.5)
+    ) +
+    labs(
+      title = plot_title,
+      y = "Estimated BAds"
+    ) +
+    theme_nature_metabolism() +
+    theme(
+      axis.title.x = element_blank(),
+      # axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+    ) +
+    scale_fill_manual(values = color_palette_gsea_bulk) +
+    scale_color_manual(values = color_palette_gsea_bulk) +
+    coord_cartesian(clip = "off") +
+    NoLegend() +
+    scale_y_continuous(expand = expansion(c(0.05, 0.25)))
+
+  # --- Add statistics ---
+
+  
+  stat.test <- compare_means(
+  Proportions ~ Depot,
+  data = plot_data,
+  method = "t.test",
+  p.adjust.method = "holm"
+  ) %>%
+  mutate(
+    p.format = signif(p.adj, 2),
+    label = p.format,
+    fontface = ifelse(p.adj <= 0.05, "bold", "plain"),
+    y.position = max(plot_data$Proportions, na.rm = TRUE) * 1.15
+  )
+
+  p <- p +
+    stat_pvalue_manual(
+      stat.test,
+      label = "label",
+      size = 5 / ggplot2::.pt,
+      inherit.aes = FALSE,
+      fontface = "fontface"
+    )
+
+  plot_list[[dataset]] <- p
+}
+
+#' 
+#' ## --- Save plots ---
+## ----fig.width=1.181102, fig.height= 0.984252, warning=FALSE-------------------------------------------------------------------------------
+mm_to_in(c(30, 25))
+
+for(nm in names(plot_list)){
+gg_bad_cibersort <- wrap_plots(plot_list[c(
+  "Gavrila", 
+  "Din",
+  "Castella"
+  )], ncol = 3) 
+
+print(plot_list[[nm]])
+
+ggsave(file.path(OUTPUT_DIR, paste0("S3C_brown_ad_cibersort_", nm, ".pdf")), plot = plot_list[[nm]], width = 30, height = 25, units = "mm", bg = "white", dpi = 600)
+}
+
+#' 
+#' # --- GTEx Correlations ----
+#' 
+#' ## --- Load data ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+meta_filtered <- read.csv(GTEX_META_CSV)
+
+#' 
+#' # --- Panel 3P. HEAT GTEx x BMI correlation --- 
+## ----fig.width= 1.417323, fig.height=1.771654----------------------------------------------------------------------------------------------
+# make sure tissue has exactly 2 levels
+tissue_levels <- unique(meta_filtered$tissue)
+
+# monochromatic blue palette
+tissue_cols <- c(
+  lighten("blue", 0.3),
+  darken("blue", 0.3)
+)
+names(tissue_cols) <- tissue_levels
+
+# Initialize plot ---
+gg_heat_bmi_corr <- ggplot(meta_filtered, aes(BMI, HEAT, color = tissue, fill = tissue)) +
+  geom_point(shape = 21, alpha = 0.2, stroke = 0.2, size = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 0.3) +
+  stat_cor(
+    aes(group = tissue, color = tissue),
+    method = "pearson",
+    size = 6 / .pt, 
+    show.legend = FALSE, 
+    label.y = c(6.8, 5.8)
+  ) +
+  scale_color_manual(values = tissue_cols, name = "Tissue") +
+  scale_fill_manual(values = tissue_cols, name = "Tissue") +
+  theme_nature_metabolism() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "HEAT Score x BMI",
+    y = "HEAT Score (ssGSEA)"
+  ) +
+  coord_cartesian(clip = "off")
+
+#' 
+#' ## --- Save plot ---
+## ----fig.width= 1.574803, fig.height=1.771654----------------------------------------------------------------------------------------------
+mm_to_in(c(40, 45))
+
+# Expand axis and add tag
+gg_heat_bmi_corr <- gg_heat_bmi_corr +
+  scale_x_continuous(expand = expansion(0.1)) +
+  scale_y_continuous(expand = expansion(0.1))
+
+gg_heat_bmi_corr
+
+# Save and output
+ggsave(file.path(OUTPUT_DIR, "3P_heat_bmi_corr.pdf"), plot = gg_heat_bmi_corr, width = 40, height = 45, units = "mm", bg = "white",  dpi = 600)
+
+
+#' 
+#' # --- Panel 3Q. HEAT GTEx x Age correlation --- 
+## ----fig.width= 1.417323, fig.height=1.771654----------------------------------------------------------------------------------------------
+# make sure tissue has exactly 2 levels
+tissue_levels <- unique(meta_filtered$tissue)
+
+# monochromatic blue palette
+tissue_cols <- c(
+  lighten("red", 0.1),
+  darken("red", 0.3)
+)
+names(tissue_cols) <- tissue_levels
+
+# Initialize plot ---
+gg_heat_age_corr <- ggplot(meta_filtered, aes(AGE, HEAT, color = tissue, fill = tissue)) +
+  geom_point(shape = 21, alpha = 0.2, stroke = 0.2, size = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 0.3) +
+  stat_cor(
+    aes(group = tissue, color = tissue),
+    method = "pearson",
+    size = 6 / .pt, 
+    show.legend = FALSE, , 
+    label.y = c(6.8, 5.8),
+  ) +
+  scale_color_manual(values = tissue_cols, name = "Tissue") +
+  scale_fill_manual(values = tissue_cols, name = "Tissue") +
+  theme_nature_metabolism() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "HEAT Score x Age",
+    y = "HEAT Score (ssGSEA)"
+  ) +
+  coord_cartesian(clip = "off")
+
+#' 
+#' ## --- Save plot ---
+## ----fig.width= 1.574803, fig.height=1.771654----------------------------------------------------------------------------------------------
+mm_to_in(c(40, 45))
+
+# Expand axis and add tag
+gg_heat_age_corr <- gg_heat_age_corr +
+  scale_x_continuous(expand = expansion(0.1)) +
+  scale_y_continuous(expand = expansion(0.1))
+
+gg_heat_age_corr
+
+# Save and output
+ggsave(file.path(OUTPUT_DIR, "3Q_heat_age_corr.pdf"), plot = gg_heat_age_corr, width = 40, height = 45, units = "mm", bg = "white",  dpi = 600)
+
+
+#' 
+#' # --- Panel 3R. HEAT GTEx x Sex Boxplot --- 
+## ----fig.width=2.165354, fig.height= 1.771654----------------------------------------------------------------------------------------------
+plot_data <- meta_filtered %>%
+  mutate(
+    tissue_short = case_when(
+      tissue == "Subcutaneous" ~ "SubQ",
+      tissue == "Visceral" ~ "Vis"
+    ),
+    sex_short = case_when(
+      SEX == "Female" ~ "Fem",
+      SEX == "Male" ~ "Male"
+    )
+  ) %>%
+  mutate(x_label = paste(tissue_short, sex_short, sep = "\n"))
+
+comparisons_list <- combn(unique(plot_data$x_label), 2, simplify = FALSE)
+comparisons_list <- list(
+  c("SubQ\nFem", "SubQ\nMale"),
+  c("SubQ\nFem", "Vis\nFem"),
+  c("Vis\nMale", "Vis\nFem"),
+  c("SubQ\nMale", "Vis\nMale")
+)
+gg_heat_sex_tissue_boxplot <- ggplot(plot_data, aes(x = x_label, y = HEAT)) +
+  geom_jitter(aes(alpha = tissue, fill = SEX, colour = SEX), shape = 21, size = 1, width = 0.05, stroke = 0.2) +
+stat_compare_means(
+  comparisons = comparisons_list,
+  method = "wilcox.test",
+  paired = FALSE,
+  p.adjust.method = "none",
+  aes(
+    label = after_stat(ifelse(p < 0.001, "<0.001", sprintf("%.2f", p))),
+    fontface = after_stat(ifelse(p < 0.05, "bold", "plain")),
+    colour   = after_stat(ifelse(p < 0.05, "red", "black"))
+  ),
+  size = 5 / .pt
+) +
+  geom_boxplot(aes(color = SEX), outliers = FALSE, width = 0.3, fill = "white", linewidth = 0.3) +
+  scale_fill_manual(values = c("Female" = "coral", "Male" = "darkslategray")) +
+  scale_color_manual(values = c("Female" = "coral", "Male" = "darkslategray")) +
+  scale_alpha_manual(values = c(0.4, 0.6)) +
+  theme_nature_metabolism() +
+  theme(legend.position = "none") +
+  theme(
+    plot.title = element_text(size = 6, hjust = 0.5),
+    axis.line = element_line(linewidth = 0.3) # smaller = thinner lines
+  ) +
+  labs(
+    title = "Tissue and Gender",
+    subtitle = "GTEx - Adipose Tissue",
+    y = "HEAT Score (ssGSEA)",
+    x = NULL
+  ) +
+  coord_cartesian(clip = "off")
+
+#' 
+#' 
+#' ## --- Save the pplot ---
+## ----fig.width= 1.574803, fig.height=1.771654----------------------------------------------------------------------------------------------
+mm_to_in(c(40, 45))
+gg_heat_sex_tissue_boxplot <- gg_heat_sex_tissue_boxplot +
+  scale_y_continuous(expand = expansion(0.08))
+
+gg_heat_sex_tissue_boxplot
+ggsave(file.path(OUTPUT_DIR, "3R_heat_sex_tissue_boxplot.pdf"), plot = gg_heat_sex_tissue_boxplot, width = 40, height = 45, , units = "mm", bg = "white",  dpi = 600)
+
+#' 
+#' # --- Panel 3S. GTEx HEAT x Disease Association BoxPlots --- 
+#' ## --- Load the data ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Load calculated significant correlations
+stratified_model_aov <- read.csv(GTEX_AOV_STATS_CSV)
+# significant_stratified_aov <- read.csv(GTEX_AOV_STATS_SIGNIF_CSV)
+
+# Load file with HEAT score and metadata values
+meta_filtered <- read.csv(GTEX_META_CSV)
+
+# Load metadata explanation
+gtex_subj_meta_annot <- read.csv(GTEX_META_ANNOT_CSV)
+
+#' 
+#' # --- Panel S3Q. GTEx HEAT x Disease Association BoxPlots - All comparisons --- 
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Store significant associations ----
+sig_vars <- c("MHHTN",
+              "MHRNLFLR",
+              "MHT2D"
+              )
+
+# Extract GTEx variables description ----
+var_description <- gtex_subj_meta_annot %>%
+  dplyr::filter(VARNAME %in% sig_vars) %>%
+  select(VARDESC, VARNAME)
+
+
+# Prepare plot data ----
+plot_data <- meta_filtered %>%
+  select(tissue, SEX, HEAT, COHORT, all_of(sig_vars)) %>%
+  pivot_longer(cols = all_of(sig_vars), names_to = "disease", values_to = "disease_status") %>%
+  mutate(disease_status = as.character(disease_status)) %>%
+  mutate(disease_status = case_when(
+    disease_status == "0" ~ "Non-Diseased",
+    disease_status == "1" ~ "Diseased",
+    TRUE ~ "Unknown"
+  )) %>%
+  mutate(disease_status = factor(disease_status, levels = c("Non-Diseased", "Diseased"))) %>%
+  drop_na(disease_status) |> # Drop rows with any NA in the model variables
+  mutate(tissue = case_when(
+    str_detect(tolower(tissue), "sub") ~ "Subcutaneous",
+    str_detect(tolower(tissue), "vis") ~ "Visceral",
+    TRUE ~ "Unknown"
+  )) %>%
+  select(tissue, SEX, HEAT, COHORT, disease, disease_status) %>%
+  mutate(
+    tissue_short = case_when(
+      tissue == "Subcutaneous" ~ "SubQ",
+      tissue == "Visceral" ~ "Vis"
+    ),
+    sex_short = case_when(
+      SEX == "Female" ~ "Fem",
+      SEX == "Male" ~ "Male"
+    ),
+    x_var = paste(tissue, as.character(SEX), sep = "\n")
+  ) %>%
+  mutate(x_label = paste(tissue_short, sex_short, sep = "\n")) %>%
+  left_join(var_description, by = c("disease" = "VARNAME")) %>%
+  mutate(VARDESC = str_remove(VARDESC, "\\(NIDDM, adult onset diabetes\\)")) |>
+  mutate(x_label = factor(x_label))
+
+x_levels <- levels(plot_data$x_label)
+
+# --- Add statistics ---
+## Extract x variable names to left join
+names_map <- plot_data %>% distinct(x_var, x_label)
+
+## Filter pre-calculated statistics
+stat_df <- stratified_model_aov %>%
+  filter(term %in% sig_vars) %>%
+  left_join(var_description, by = c("term" = "VARNAME")) %>%
+  mutate(
+    x = paste(tissue, SEX, sep = "\n"),
+    group1 = "Non-Diseased",
+    group2 = "Diseased",
+    y.position = max(plot_data$HEAT) * 1.05,
+    label = case_when(
+      # FDR < 0.001 ~ "<0.001",
+      TRUE ~ as.character(signif(FDR, 2))
+    )
+  ) %>%
+  select(VARDESC, x, group1, group2, p.value, y.position, label) %>%
+  left_join(names_map, by = c("x" = "x_var")) %>%
+  mutate(VARDESC = str_remove(VARDESC, "\\(NIDDM, adult onset diabetes\\)"))
+
+## Add aesthetic annotations
+stat_df <- stat_df %>% mutate(
+  xmin = as.numeric(x_label) - 0.25,
+  xmax = as.numeric(x_label) + 0.25,
+  colors = ifelse(p.value < 0.05, "red", "black"),
+  fontface = ifelse(p.value < 0.05, "bold", "plain")
+)
+
+
+#  --- Create the plot ---
+gg_gtex_ancov_boxplot_all <- ggplot(
+  plot_data,
+  aes(
+    x = x_label,
+    y = HEAT,
+    color = disease_status
+  )
+) +
+  geom_jitter(aes(colour = disease_status), alpha = 0.2, shape = 21, size = 0.5, stroke = 0.2, position = position_jitterdodge(dodge.width = 0.8)) +
+  geom_boxplot(outliers = F, linewidth = 0.3) +
+  labs(x = NULL, y = "HEAT Score (ssGSEA)") +
+  theme_nature_metabolism() +
+  theme(strip.background = element_blank()) +
+  scale_color_manual(values = c("grey65", "deeppink4"), name = "Disease status") +
+  stat_pvalue_manual(
+    stat_df,
+    label = "label",
+    xmin = "xmin",
+    xmax = "xmax",
+    fontface = "fontface",
+    y.position = "y.position", bracket.size = 0.2,
+    size = 5 / .pt
+  ) +
+  facet_wrap(vars(VARDESC)) +
+  coord_cartesian(clip = "off")
+
+#' 
+#' ## --- Record N ---
+## ------------------------------------------------------------------------------------------------------------------------------------------
+gtex_n <- plot_data |> count(tissue, SEX, disease, disease_status)
+
+#' 
+#' ## --- Save plot ---
+## ----fig.width=7.086614, fig.height=1.265467-----------------------------------------------------------------------------------------------
+mm_to_in(c(180, 225 / 7))
+gg_gtex_ancov_boxplot_all <- gg_gtex_ancov_boxplot_all+
+  scale_y_continuous(expand = expansion(mult = c(0.15)))
+
+gg_gtex_ancov_boxplot_all
+
+# Save and output
+scale <- 180
+ggsave(file.path(OUTPUT_DIR, "S3Q_gtex_ancov_boxplot_all.pdf"), plot = gg_gtex_ancov_boxplot_all, width = 180, height = 225 / 7, units = "mm", bg = "white",  dpi = 600)
+
+#' 
+#' # --- Panel 3S. GTEx HEAT x Disease Association BoxPlots - Female SubQ --- 
+## ------------------------------------------------------------------------------------------------------------------------------------------
+# Filter plot data, rename and assign levels
+plot_data_2 <- plot_data |>
+  filter(tissue == "Subcutaneous", SEX == "Female") |>
+  mutate(
+    VARDESC = case_when(
+      str_detect(VARDESC, "Diabetes") ~ "T2D",
+      TRUE ~ VARDESC
+    ),
+    VARDESC = factor(VARDESC)
+  )
+
+# Extract levels for x axis
+x_levels <- levels(plot_data_2$VARDESC)
+
+# Create statistics table with matching x axis variables
+stat_df <- stratified_model_aov %>%
+  filter(
+    term %in% sig_vars,
+    SEX == "Female",
+    tissue == "Subcutaneous"
+  ) %>%
+  left_join(var_description, by = c("term" = "VARNAME")) %>%
+  mutate(
+    VARDESC = case_when(
+      str_detect(VARDESC, "Diabetes") ~ "T2D",
+      TRUE ~ VARDESC
+    ),
+    x = factor(VARDESC, levels = x_levels),
+    group1 = "Non-Diseased",
+    group2 = "Diseased",
+    y.position = max(plot_data_2$HEAT) * 1.10,
+    label = case_when(
+      # FDR < 0.001 ~ "<0.001",
+      TRUE ~ as.character(signif(FDR, 2))
+    ),
+    xmin = as.numeric(x) - 0.25,
+    xmax = as.numeric(x) + 0.25,
+    colors = ifelse(FDR < 0.05, "red", "black"),
+    fontface = ifelse(FDR < 0.05, "bold", "plain")
+  ) %>%
+  select(
+    VARDESC, x, xmin, xmax,
+    group1, group2,
+    p.value, y.position, label, fontface
+  )
+
+
+# Create the plot with ggpubr
+gg_gtex_ancov_boxplot <- ggplot(
+  plot_data_2,
+  aes(
+    x = VARDESC,
+    y = HEAT,
+    color = disease_status
+  )
+) +
+  geom_jitter(aes(colour = disease_status), alpha = 0.5, shape = 21, size = 0.5, stroke = 0.2, position = position_jitterdodge(dodge.width = 0.8)) +
+  geom_boxplot(outliers = F, linewidth = 0.3) +
+  labs(x = NULL, y = "HEAT Score (ssGSEA)") +
+  theme_nature_metabolism() +
+  theme(strip.background = element_blank()) +
+  # theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  scale_color_manual(values = c("grey65", "deeppink4"), name = "Disease status") +
+  stat_pvalue_manual(
+    stat_df,
+    label = "label",
+    xmin = "xmin",
+    xmax = "xmax",
+    fontface = "fontface",
+    y.position = "y.position",
+    bracket.size = 0.2,
+    size = 5 / .pt
+  ) +
+  labs(
+    title = "HEAT Score ",
+    subtitle = "GTEx - Subcutaneous WAT"
+  )+
+  coord_cartesian(clip = "off")
+
+gg_gtex_ancov_boxplot
+
+#' 
+#' 
+#' ## --- Save plot ---
+## ----fig.width=2.874016, fig.height=1.771654-----------------------------------------------------------------------------------------------
+mm_to_in(c(73, 45))
+gg_gtex_ancov_boxplot <- gg_gtex_ancov_boxplot +
+  scale_y_continuous(expand = expansion(mult = c(0.15)))
+
+gg_gtex_ancov_boxplot
+
+# Save and output
+ggsave(file.path(OUTPUT_DIR, "3S_gtex_ancov_boxplot.pdf"), plot = gg_gtex_ancov_boxplot, width = 73, height = 45, units = "mm", bg = "white",  dpi = 600)
+
+#' 

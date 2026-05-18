@@ -1,0 +1,369 @@
+# ---
+# title: "4-FigurePlotting"
+# author: "Henrique"
+# date: "2025-07-17"
+# output: html_document
+# ---
+# # --- Setup ---
+# ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+mm_to_in <- function(mm) mm / 25.4
+
+# Load libraries
+library(Seurat)
+library(ggplot2)
+library(RColorBrewer)
+library(dplyr)
+library(stringr)
+library(ggrepel)
+library(here)
+library(conflicted)
+
+
+conflicts_prefer(ggplot2::annotate)
+conflicts_prefer(base::unname)
+
+
+# Define short cell names
+cell_type_mapping <- c(
+  "Brown Adipocytes" = "BAds",
+  "White Adipocytes" = "WAds",
+  "Lipid Associated Macrophages" = "PreAds",
+  "ADIPOQ+ Smooth Muscle Cells" = "PreAds",
+  "Pre-adipocytes" = "PreAds",
+  "Adipocyte Progenitor Cells" = "ASPC",
+  "Mesenchymal Stem Cells" = "MSCs",
+  "Arterial Endothelial Cells" = "EndoCs",
+  "Venous Endothelial Cells" = "EndoCs",
+  "Capillary Endothelial Cells" = "EndoCs",
+  "Lymphatic Endothelial Cells" = "LECs",
+  "Pericytes" = "Pericytes",
+  "Smooth Muscle Cells" = "SMCs",
+  "Macrophages" = "Macro",
+  "Mast Cells" = "MastCs",
+  "T Lymphocytes" = "T Cells",
+  "B Lymphocytes" = "B Cells",
+  "Neutrophils" = "Neutrophils",
+  "Schwann Cells" = "SchwannCs",
+  "Neuron Associated Cells" = "NeuroCs",
+  "Parathyroid Associated Cells" = "ParaThyCs",
+  "PRM1+ Cells" = "PRM1+"
+)
+
+# OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
+
+# --- Setup paths ---
+
+## Inputs
+SEURAT_INPUT <- here(
+  "..",
+  "data/cervical_at_gex_seurat.rds")
+
+DESEQ_STATS_CSV <- here(
+  "..",
+  "data/Figure_4/deseq2_stats.csv")
+GSEA_HALLMARK <- here(
+  "..",
+  "data/Figure_4/HallMark_GSEA.csv")
+GSEA_GO <- here(
+  "..",
+  "data/Figure_4/GO_GSEA.csv")
+GSEA_REACTOME <- here(
+  "..",
+  "data/Figure_4/Reactome_GSEA.csv")
+
+HEATMAP_INPUT_RDS <- here(
+  "..",
+  "data/Figure_4/heatmap_input.rds")
+
+# Outputs
+OUTPUT_DIR <- here("..", "results", "Figure_4")
+
+dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
+# ```
+
+# # --- Load Seurat  CamaraH---
+# ```{r}
+s.object <- readRDS(SEURAT_INPUT)
+# ```
+
+# # --- Panel 4A. Heatmap White Adipocytes DEG by depot ---
+# ## --- Plotting and save ---
+# ```{r plot-heatmap}
+# Load heatmap input list (.rds) generated on #X.03.X_Heatmap_Processing.Rmd
+pheatmap_data_all_deg <- readRDS(HEATMAP_INPUT_RDS)
+
+# Remove unwanted annotations
+pheatmap_data_all_deg$ann_df.sub <- pheatmap_data_all_deg$ann_df.sub |> select(-`Sample ID`)
+
+# Save pheatmap as pdf specific size and font
+
+multiplier <- 3
+pdf(file.path(OUTPUT_DIR, "4A_heatmap_deg_wad.pdf"), width = mm_to_in(50 * multiplier), height = mm_to_in(180 * multiplier))
+
+
+
+new_order <- c(
+  grep("White Adipocytes_Superficial", colnames(pheatmap_data_all_deg$plot.data)),
+  grep("White Adipocytes_Deep", colnames(pheatmap_data_all_deg$plot.data)),
+  grep("Brown", colnames(pheatmap_data_all_deg$plot.data))
+)
+
+pheatmap::pheatmap(
+  mat = log1p(pheatmap_data_all_deg$plot.data[, new_order]),
+  col = rev(RColorBrewer::brewer.pal(11, "RdBu")),
+  annotation_col = pheatmap_data_all_deg$ann_df.sub,
+  annotation_colors = pheatmap_data_all_deg$ann_colors,
+  legend_width = 10, legend = F,
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  show_colnames = FALSE,
+  show_rownames = FALSE,
+  scale = "row",
+  gaps_col = c(14, 25),
+  gaps_row = pheatmap_data_all_deg$gaps_row,
+  fontsize = 6 * multiplier, # Default font size
+  fontsize_row = 6 * multiplier, # Row labels
+  fontsize_col = 6 * multiplier # Column labels
+)
+dev.off()
+
+colnames(pheatmap_data_all_deg$plot.data)
+# -----------------------------
+#  Record N
+# -----------------------------
+pheatmap_data_all_deg$ann_df.sub |> count(Cell, `Neck region`)
+# ```
+
+
+# # --- Panel 4B. DESeq2 Volcano Plot ---
+# ## --- Read DESeq2 DE data.frame ---
+# ```{r read-deseq-df, fig.width= 1.77, fig.height= 1.42}
+final_DE <- read.csv(DESEQ_STATS_CSV)
+
+final_DE_filt <- final_DE %>% dplyr::filter(padj <= 0.05, contrast.2 != "Intermediate", contrast.1 != "Intermediate")
+
+
+# This adds a categorisation based on whether the log2FoldChange is up or down
+final_DE_filt$direction <- ifelse(final_DE_filt$log2FoldChange > 0, "Up in Deep", "Up in Superficial")
+
+final_DE_filt %>%
+  dplyr::filter(cell_type == "White Adipocytes") %>%
+  count(direction)
+# ```
+# ## --- Set up helper function ---
+# ```{r}
+
+PlotVolcano <- function(de_table, cluster, cont.1 = "Deep", cont.2 = "Superficial",
+                        fc_cutoff = 1.5, p_cutoff = 0.05, show_genes = NULL,
+                        n_top_show = 40, label_size = 6) {
+  res <- de_table %>% dplyr::filter(cell_type == cluster)
+  sub_res <- res %>% dplyr::filter(contrast.1 == cont.1, contrast.2 == cont.2)
+
+  larger_cont_name <- max(nchar(cont.1), nchar(cont.2))
+  contrast_name <- paste0(cluster, ": ", cont.1, " vs ", cont.2)
+  axis_cont.1 <- sprintf("%-*s", larger_cont_name, as.character(cont.1))
+  axis_cont.2 <- sprintf("%-*s", larger_cont_name, as.character(cont.2))
+
+  volcano_df <- sub_res %>%
+    dplyr::mutate(
+      neg_log10_p = -log10(padj),
+      direction = dplyr::case_when(
+        padj < p_cutoff & log2FoldChange >= fc_cutoff ~ "Up in Deep",
+        padj < p_cutoff & log2FoldChange <= -fc_cutoff ~ "Up in Superficial",
+        TRUE ~ "Not Significant"
+      )
+    )
+
+  maxFC <- max(abs(volcano_df$log2FoldChange), na.rm = TRUE)
+  maxY <- max(volcano_df$neg_log10_p, na.rm = TRUE)
+
+  top_genes <- volcano_df %>%
+    dplyr::filter(direction != "Not Significant") %>%
+    dplyr::arrange(pvalue) %>%
+    dplyr::slice_head(n = n_top_show) %>%
+    dplyr::pull(gene)
+
+  label_genes <- unique(c(show_genes, top_genes))
+
+  volcano_df <- volcano_df %>%
+    dplyr::mutate(label = dplyr::if_else(gene %in% label_genes, as.character(gene), NA_character_))
+
+  volcano_df$direction <- factor(
+    volcano_df$direction,
+    levels = c("Up in Superficial", "Not Significant", "Up in Deep")
+  )
+
+  gg_volcano <- ggplot(volcano_df, aes(x = log2FoldChange, y = neg_log10_p)) +
+    geom_vline(
+      xintercept = c(-fc_cutoff, 0, fc_cutoff),
+      linetype = "dashed", color = "black", linewidth = 0.1
+    ) +
+    geom_hline(
+      yintercept = -log10(p_cutoff),
+      linetype = "dashed", color = "black", linewidth = 0.1
+    ) +
+
+    # Solid points, no outline, smaller size
+    geom_point(aes(color = direction), shape = 16, size = 0.7, alpha = 0.15) +
+    geom_point(
+      data = volcano_df %>% dplyr::filter(gene %in% label_genes),
+      aes(x = log2FoldChange, y = neg_log10_p, fill = direction),
+      shape = 21,
+      size = 0.9,
+      stroke = 0.2,
+      color = "black",
+      alpha = 1,
+      inherit.aes = FALSE
+    ) +
+    scale_color_manual(values = c(
+      "Up in Superficial" = neck.color[["Superficial"]],
+      "Up in Deep"        = neck.color[["Deep"]],
+      "Not Significant"   = "grey70"
+    )) +
+    scale_fill_manual(values = c(
+      "Up in Superficial" = colorspace::darken(neck.color[["Superficial"]], amount = 0.15),
+      "Up in Deep"        = colorspace::darken(neck.color[["Deep"]], amount = 0.15),
+      "Not Significant"   = "grey60"
+    )) +
+    labs(
+      title = "Cervical Depot DGE",
+      subtitle = cluster,
+      x = paste0("Log2 fold-change"),
+      y = "-log10(adjusted p-value)",
+      color = NULL
+    ) +
+    theme(
+      legend.position = "top",
+      plot.subtitle = element_text(hjust = 0.5)
+    ) +
+    scale_x_continuous(limits = c(-maxFC, maxFC)) +
+    scale_y_continuous(limits = c(0, maxY * 1.05))
+
+  gg_volcano <- gg_volcano +
+
+    # Add a text
+    geom_text_repel(
+      aes(label = label),
+      max.overlaps = Inf,
+      size = label_size / .pt,
+      box.padding = 0.4,
+      point.padding = 0.25,
+      segment.color = "black",
+      segment.size = 0.3,
+      min.segment.length = 0,
+      na.rm = TRUE
+    ) +
+
+    # Corner annotations with neck colors
+    annotate(
+      "text",
+      x = -Inf, y = Inf, label = "Up in Superficial",
+      hjust = -0.05, vjust = 1.2, color = neck.color["Superficial"], size = 5 / .pt
+    ) +
+    annotate(
+      "text",
+      x = Inf, y = Inf, label = "Up in Deep",
+      hjust = 1.05, vjust = 1.2, color = neck.color["Deep"], size = 5 / .pt
+    )
+
+  gg_volcano
+}
+# ```
+
+# ## --- Plotting and save ---
+# ```{r plot-volcano, fig.width= 1.968504, fig.height= 1.968504}
+mm_to_in(c(50, 50))
+
+# Choose genes to plot
+deep_genes <- c("PDE1A", "PDE4D", "PDE3A", "EBF2", "PRDM16", "UCP1", "PPARGC1A", "MECOM")
+sup_genes <- c("HSPA1A", "CRYAB", "ADAMTS4", "MMP17")
+
+# Plot
+gg_volcano <- PlotVolcano(de_table = final_DE, cluster = "White Adipocytes", show_genes = c(deep_genes, sup_genes), n_top_show = 0, cont.1 = "Deep", cont.2 = "Superficial", label_size = 5, fc_cutoff = 0.5) + theme_nature_metabolism() + theme(plot.subtitle = element_text(hjust = 0.5)) + NoLegend()
+# gg_volcano <- gg_volcano + plot_annotation(tag_levels = list("b")) & theme(plot.tag = element_text(face = "bold", size = 6 * 1.3))
+gg_volcano
+
+# Save as png
+ggsave(file.path(OUTPUT_DIR, "4B_volcano_wad.pdf"), gg_volcano, width = 50, height = 50, units = "mm", bg = "white", dpi = 600)
+# ```
+
+# # --- Panel 4C. GSEA from WAd DEG ---
+# ## --- Load the data ---
+# ```{r}
+gsea_hallmark <- read.csv(file = GSEA_HALLMARK)
+gsea_GO_BP <- read.csv(file = GSEA_GO)
+gsea_Rctm <- read.csv(file = GSEA_REACTOME)
+# ```
+
+# ## --- Set up plotting helper function---
+# ```{r}
+GOBPDotPlot <- function(gsea_res, wrap = 80, text_size = 8, left_margin = 10, padj_cutoff = 0.1, size_by = "Gene ratio", slice_top = FALSE, top_n = 5) {
+  df <- as.data.frame(gsea_res)
+
+  df <- df %>%
+    mutate(
+      NES = NES,
+      gene_count = str_count(core_enrichment, pattern = "/") + 1,
+      gene_ratio = gene_count / setSize,
+      Description = str_replace_all(Description, "_", " "),
+      Description = str_wrap(as.character(Description), width = wrap),
+      Description = str_remove(Description, "GOBP |REACTOME "),
+      direction = case_when(NES > 0 ~ "Superficial Enriched", NES < 0 ~ "Deep Enriched")
+    ) %>%
+    dplyr::filter(p.adjust <= padj_cutoff)
+
+  if (slice_top) {
+    df <- df %>%
+      group_by(direction) %>%
+      arrange(p.adjust) %>%
+      slice_head(n = top_n) %>%
+      ungroup()
+  }
+
+  # Ensure factor levels are ordered per direction
+  df <- df %>%
+    group_by(direction) %>%
+    mutate(Description = str_to_title(Description)) %>%
+    mutate(Description = factor(Description, levels = unique(Description))) %>%
+    ungroup()
+
+  p <- ggplot(df, aes(x = -log10(p.adjust), y = Description)) +
+    geom_point(aes(fill = NES, size = gene_ratio), shape = 21, color = "black") +
+    scale_fill_gradient2(name = "NES") +
+    scale_size(range = c(1, 2), name = size_by, limits = c(0, 0.6), breaks = c(0, 0.3, 0.6), ) +
+    scale_y_discrete(limits = rev) +
+    facet_wrap(~direction, scales = "free_y") +
+    theme_nature_metabolism() +
+    theme(
+      legend.position = "right",
+      panel.grid.major = element_line(color = "grey80"),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.3),
+      strip.background = element_blank(),
+      strip.text = element_text(face = "bold", size = text_size),
+      axis.text.y = element_text(size = text_size, hjust = 1),
+      axis.title.y = element_blank(),
+      plot.margin = margin(t = 5.5, r = 5.5, b = 5.5, l = left_margin)
+    ) +
+    labs(x = "-log10(p.adjusted)", title = "GSEA Dotplot by Regulation Direction")
+
+  return(p)
+}
+# ```
+
+# ## --- Plotting and saving ---
+# ```{r, fig.width=4.724409 , fig.height=1.968504}
+mm_to_in(c(130, 50))
+gg_gsea_gobp <- GOBPDotPlot(gsea_GO_BP, padj_cutoff = 0.1, wrap = 30, slice_top = TRUE, top_n = 8, text_size = 5, left_margin = 5.5) +
+  labs(title = "GO - Biological Process\nWhite Adipocytes")
+
+
+gg_gsea_gobp
+
+# Save the file
+ggsave(file.path(OUTPUT_DIR, "4C_dotplot_gsea_go_bp_nes.pdf"), gg_gsea_gobp, width = 130, height = 50, units = "mm", bg = "white", dpi = 600)
+# ```
+
+
