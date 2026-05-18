@@ -1,0 +1,1080 @@
+# Converted from 6-S5-FigurePlotting.Rmd to plain R script.
+# RMarkdown narrative text and chunk fences are commented.
+# Code chunks are otherwise preserved.
+# Setup libraries were cleaned to explicit packages used by this script.
+
+# --- R Markdown YAML header (commented) ---
+# ---
+# title: "6-S5-FigurePlotting"
+# author: "Henrique"
+# date: "2025-07-17"
+# output: html_document
+# ---
+# --- End YAML header ---
+# # --- Setup ---
+# ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load libraries
+library(Seurat)
+library(ggplot2)
+library(RColorBrewer)
+library(dplyr)
+library(stringr)
+library(readr)
+library(tidyr)
+library(tibble)
+library(viridis)
+library(patchwork)
+# library(Signac) # Commented out due to data upload restrictions to Ocean Code
+library(ggrepel)
+library(pheatmap)
+library(here)
+library(conflicted)
+# OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
+source(here("0.environment_setup/snRNAseq_graphics_setup.R"))
+
+# --- Resolve conflicts ---
+conflicts_prefer(pheatmap::pheatmap)
+
+
+# --- Setup paths ---
+## Inputs
+SEURAT_INPUT <- here(
+  "..",
+  "data/cervical_at_gex_seurat.rds"
+)
+
+DESEQ_STATS_CSV <- here(
+  "..",
+  "data/Figure_6_S5/deseq2_stats.csv"
+)
+
+VISION_SIG_DIR <- here(
+  "..",
+  "data/Figure_2_3_S2_S3/vision_signature_scores"
+)
+
+CAMARAH_VISION_CSV <- file.path(
+  VISION_SIG_DIR,
+  "CamaraH_Dataset_VISION_sigScore.csv"
+)
+
+
+
+# Inputs to update
+HEATMAP_LOG_CPM_RDS <- here(
+  "..",
+  "data/Figure_6_S5/CamaraH_pseudobulk_log_CPM_count_matrix_for_heatmap.rds"
+)
+HEATMAP_METADATA_RDS <- here(
+  "..",
+  "data/Figure_6_S5/CamaraH_metadata_for_heatmap.rds"
+)
+HEATMAP_CTS_RDS <- here(
+  "..",
+  "data/Figure_6_S5/CamaraH_pseudobulk_count_matrix_for_ggplot.rds"
+)
+
+
+
+BULK_DIR <- here(
+  "..",
+  "data/Figure_6_S5/Cleaned_Datasets"
+)
+BULK_META_DIR <- here(
+  "..",
+  "data/Figure_6_S5/Experimental_Design"
+)
+
+MULTIOME_SEURAT_RDS <- here(
+  "..",
+  "data/Figure_6_S5/multiome_seurat.rds"
+)
+
+
+# Outputs
+OUTPUT_DIR <- here("..", "results", "Figure_6_S5")
+
+dir.create(OUTPUT_DIR, showWarnings = F, recursive = T)
+# ```
+
+
+# # --- Heatmap Plots ---
+# ## --- Load Pseudobulk expression matrix for heatmap ---
+# ```{r}
+mtx <- readRDS(HEATMAP_LOG_CPM_RDS)
+# ```
+# ## --- load meadata ---
+# ```{r}
+hm_meta <- readRDS(HEATMAP_METADATA_RDS)
+# ```
+# ## --- Helper function to filter Matrix ---
+# ```{r def-filt-func}
+# Define function to filter the matrix
+filterHmMatrix <- function(matrix, genes, sample_pattern, negate_pattern = "none") {
+  # If more then 1 term is passed as argument, collapse for search
+  if (length(sample_pattern) > 1) {
+    sample_pattern <- paste(sample_pattern, collapse = "|")
+  }
+  # Filter the matrix
+  matrix_filter <- matrix[genes, (str_detect(colnames(matrix), sample_pattern) &
+    !str_detect(colnames(matrix), negate_pattern)
+  )]
+  return(matrix_filter)
+}
+# ```
+
+# ```{r}
+hm_data <- filterHmMatrix(mtx, c(
+  "PAX3", "HOXD3", "HOXD4", "IRX2", "IRX5",
+  "HOXA3", "HOXA5", "HOXA6"
+),
+sample_pattern = c("White", "Progenitor", "Endothelial", "Smooth Muscle"),
+negate_pattern = "Intermediate"
+)
+# ```
+
+# # --- Panel S5C. Hox Genes HeatMap: White Adipocytes and Adipocyte Progenitors ---
+# ## --- Plotting and save ---
+# ```{r}
+cell_type_of_interest <- c("White", "Progenitor", "Endothelial", "Smooth Muscle")
+# Determine cell type patterns to filter for
+cell_type_of_interest <- c("White", "Progenitor")
+
+# Filter expression matrix
+hm_data <- filterHmMatrix(mtx,
+  c(
+    "PAX3", "HOXD3", "HOXD4", "IRX2", "IRX5",
+    "HOXA3", "HOXA4", "HOXA5", "HOXA6"
+  ),
+  sample_pattern = cell_type_of_interest,
+  negate_pattern = "Intermediate"
+)
+
+
+# Create metadata color mapping
+## Indicate the columns in hm_meta that you want colors for
+cols_for_colors <- c("cell_type", "neck_region")
+
+## Filter metadata
+cell_type_filter <- paste(cell_type_of_interest, collapse = "|")
+annotation_col <- hm_meta |>
+  dplyr::filter(
+    str_detect(cell_type, cell_type_filter),
+    neck_region != "Intermediate"
+  ) |>
+  select(all_of(cols_for_colors))
+
+# Bulit annotation_color list
+annotation_colors <- lapply(cols_for_colors, function(col) {
+  vals <- unique(annotation_col[[col]])
+  setNames(
+    ifelse(vals %in% names(c(palette.use, neck.color)), c(palette.use, neck.color)[vals], "grey"),
+    vals
+  )
+})
+names(annotation_colors) <- cols_for_colors
+
+# Set up size for saving
+ncol <- ncol(hm_data)
+nrow <- nrow(hm_data)
+
+target_width_mm <- 180
+target_height_mm <- 35
+
+cellwidth <- max(4, target_width_mm / ncol)
+cellheight <- max(5, (target_height_mm - 6) / nrow) # subtract a bit for annotations
+
+
+pdf(file.path(OUTPUT_DIR, paste0("S5C_heatmap_hox_wad_aspcs.pdf")), width = mm_to_in(180), height = mm_to_in(35))
+pheatmap::pheatmap(
+  mat = hm_data,
+  annotation_col = annotation_col,
+  annotation_colors = annotation_colors,
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  scale = "row",
+  cellwidth = cellwidth, cellheight = cellheight,
+  fontsize = 6,
+  gaps_row = 5,
+  gaps_col = annotation_col |> count(cell_type, neck_region) |> pull(n) |> cumsum(),
+  show_colnames = F
+)
+dev.off()
+
+# Plot in the markdown file
+pheatmap::pheatmap(
+  mat = hm_data,
+  annotation_col = annotation_col,
+  annotation_colors = annotation_colors,
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  scale = "row",
+  cellwidth = cellwidth, cellheight = cellheight,
+  fontsize = 6,
+  gaps_row = 5,
+  gaps_col = annotation_col |> count(cell_type, neck_region) |> pull(n) |> cumsum(),
+  show_colnames = F
+)
+# ```
+
+# ## --- Record N ---
+# ```{r}
+heatmap_aspc_adipo_n <- annotation_col |> count(cell_type, neck_region)
+heatmap_aspc_adipo_n
+# ```
+
+# # --- Panel S5D. Hox Genes HeatMap: Endothelial and Smooth Muscle Cells ---
+# ## --- Plotting and save ---
+# ```{r}
+# Determine cell type patterns to filter for
+cell_type_of_interest <- c("Endothelial", "Smooth")
+
+# Filter expression matrix
+hm_data <- filterHmMatrix(mtx,
+  c(
+    "PAX3", "HOXD3", "HOXD4", "IRX2", "IRX5",
+    "HOXA3", "HOXA4", "HOXA5", "HOXA6"
+  ),
+  sample_pattern = cell_type_of_interest,
+  negate_pattern = "Intermediate"
+)
+
+
+# Create metadata color mapping
+## Indicate the columns in hm_meta that you want colors for
+cols_for_colors <- c("cell_type", "neck_region")
+
+## Filter metadata
+cell_type_filter <- paste(cell_type_of_interest, collapse = "|")
+annotation_col <- hm_meta |>
+  dplyr::filter(
+    str_detect(cell_type, cell_type_filter),
+    neck_region != "Intermediate"
+  ) |>
+  select(all_of(cols_for_colors))
+
+# Bulit annotation_color list
+annotation_colors <- lapply(cols_for_colors, function(col) {
+  vals <- unique(annotation_col[[col]])
+  setNames(
+    ifelse(vals %in% names(c(palette.use, neck.color)), c(palette.use, neck.color)[vals], "grey"),
+    vals
+  )
+})
+names(annotation_colors) <- cols_for_colors
+
+# Set up size for saving
+ncol <- ncol(hm_data)
+nrow <- nrow(hm_data)
+
+target_width_mm <- 180
+target_height_mm <- 35
+
+cellwidth <- max(4, target_width_mm / ncol)
+cellheight <- max(5, (target_height_mm - 6) / nrow) # subtract a bit for annotations
+
+
+
+pdf(file.path(OUTPUT_DIR, paste0("S5D_heatmap_hox_endo_smc_aspcs.pdf")), width = mm_to_in(180), height = mm_to_in(35))
+pheatmap::pheatmap(
+  mat = hm_data,
+  annotation_col = annotation_col,
+  annotation_colors = annotation_colors,
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  scale = "row",
+  cellwidth = cellwidth, cellheight = cellheight,
+  fontsize = 6,
+  gaps_row = 5,
+  gaps_col = annotation_col |> count(cell_type, neck_region) |> pull(n) |> cumsum(),
+  show_colnames = F
+)
+dev.off()
+
+# Plot in the markdown file
+pheatmap::pheatmap(
+  mat = hm_data,
+  annotation_col = annotation_col,
+  annotation_colors = annotation_colors,
+  cluster_cols = FALSE,
+  cluster_rows = FALSE,
+  scale = "row",
+  cellwidth = cellwidth, cellheight = cellheight,
+  fontsize = 6,
+  gaps_row = 5,
+  gaps_col = annotation_col |> count(cell_type, neck_region) |> pull(n) |> cumsum(),
+  show_colnames = F
+)
+# ```
+
+# ## --- Record N ---
+# ```{r}
+heatmap_endo_smc_n <- annotation_col |> count(cell_type, neck_region)
+heatmap_endo_smc_n
+# ```
+
+# # --- Panel 6D. HOX Volcano Plot in White Adipocytes ---
+# ## --- Read DESeq2 DE data.frame ---
+# ```{r read-deseq-df, fig.width= 1.77, fig.height= 1.42}
+pseudobulk_deseq_dge <- read.csv(DESEQ_STATS_CSV)
+
+final_DE_filt <- pseudobulk_deseq_dge %>% dplyr::filter(padj <= 0.05, contrast.2 != "Intermediate", contrast.1 != "Intermediate")
+
+
+# This adds a categorisation based on whether the log2FoldChange is up or down
+final_DE_filt$direction <- ifelse(final_DE_filt$log2FoldChange > 0, "Up in Deep", "Up in Superficial")
+
+pseudobulk_deseq_dge %>% distinct(cell_type)
+# ```
+
+# ## --- Loop and create plots  ---
+# ```{r}
+
+plot_list <- list()
+for (filter_cell in c("Adipocyte Progenitor Cell", "White Adipocytes")) {
+  df <- pseudobulk_deseq_dge %>% dplyr::filter(
+    str_detect(cell_type, filter_cell),
+    contrast.1 == "Deep",
+    contrast.2 == "Superficial"
+  )
+
+  fc_cutoff <- 0.5
+  p_cutoff <- 0.05
+
+  # Categorize points
+  volcano_df <- df %>%
+    mutate(
+      log2FoldChange = -log2FoldChange,
+      label = ifelse(str_detect(gene, "^HOX|^IRX|^PAX") & padj < 0.05, gene, NA),
+      dev_gen_cat = case_when(
+        str_detect(gene, "^HOX") ~ "HOX",
+        str_detect(gene, "^IRX") ~ "IRX",
+        str_detect(gene, "^PAX") ~ "PAX",
+        TRUE ~ NA
+      ),
+      transparent = is.na(dev_gen_cat),
+      label_color = ifelse(padj < 0.05 & log2FoldChange < 0, neck.color["Deep"], neck.color["Superficial"])
+    ) %>%
+    arrange(desc(is.na(dev_gen_cat)), dev_gen_cat)
+
+  # Extract FC for symetric x-axis
+  maxFC <- max(abs(volcano_df$log2FoldChange))
+
+  # Determine color pallete for the HOX genes
+  fill.color <- setNames(c(brewer.pal(3, name = "Set2"), "grey"), c("HOX", "PAX", "IRX", NA))
+
+  # Volcano plot
+  gg_volcano <- ggplot(volcano_df, aes(x = log2FoldChange, y = -log10(padj))) +
+    geom_vline(xintercept = c(-fc_cutoff, fc_cutoff), linetype = "dashed", color = "black", linewidth = 0.1) +
+    geom_hline(yintercept = -log10(p_cutoff), linetype = "dashed", color = "black", linewidth = 0.1) +
+    geom_point(aes(fill = dev_gen_cat, alpha = transparent), size = 1, color = "black", stroke = 0.1, shape = 21) +
+    annotate("text", x = -Inf, y = Inf, label = "Up in Deep", hjust = -0.1, vjust = 2, size = 5 / .pt, color = neck.color["Deep"]) +
+    annotate("text", x = Inf, y = Inf, label = "Up in Superficial", hjust = 1, vjust = 2, size = 5 / .pt, color = neck.color["Superficial"]) +
+    scale_alpha_manual(values = c(1, 0.1), guide = "none") +
+    labs(
+      title = paste0("Developmental Patterning Genes"),
+      subtitle = paste0(filter_cell, ": Deep vs Superficial"),
+      x = paste0("Log2 fold-change"),
+      y = "-log10 (adjusted p-value)"
+    ) +
+    scale_x_continuous(limits = c(-maxFC, maxFC)) +
+    scale_fill_manual(values = fill.color, name = "Gene Cateogry") +
+    theme_nature_metabolism() +
+    theme(legend.position = "right")
+
+  # Add gene labels
+  gg_volcano <- gg_volcano +
+    geom_text_repel(
+      aes(label = label),
+      max.overlaps = 30,
+      size = 4.5 / .pt,
+      box.padding = 0.4,
+      point.padding = 0.3,
+      segment.color = "grey50",
+      segment.size = 0.1,
+      segment.alpha = 1, # force all segments to be drawn
+      force_pull = 0, # prevents shortening to zero
+      na.rm = TRUE
+    )
+
+  plot_list[[filter_cell]] <- gg_volcano
+}
+# ```
+
+# ## --- Plotting and save ---
+# ```{r, fig.width=2.165354, fig.height=2.519685}
+mm_to_in(c(55, 64))
+gg_volcano <- plot_list[["White Adipocytes"]]
+gg_volcano <- gg_volcano + plot_annotation(tag_levels = list("d")) + theme(plot.tag = element_text(size = 6, face = "bold"))
+gg_volcano
+
+# Save as png
+ggsave(file.path(OUTPUT_DIR, "6D_volcano_white_adipocyte_hox.pdf"), gg_volcano, width = 55, height = 64, units = "mm", bg = "white", dpi = 600)
+# ```
+# # --- Panels 6A-F, S5A. Pseudobulk Gene Expression per subject/cell_type pair ---
+# ## --- Load Pseudobulk expression table for ggplot (long format) ---
+# ```{r}
+counts_table <- read_rds(HEATMAP_CTS_RDS)
+# ```
+
+# ## --- Define genes of interest ---
+# ```{r}
+genes_of_interest <- c(
+  "MECOM", "EBF2", "PRDM16", "COBL", "PPARGC1A",
+  "LEP", "SLC7A10", "ADIPOQ", "PLIN1", "PLIN4", "FABP4",
+  # "CKMT2", "GK", "CA12", "BDH1",
+  "PAX3", "HOXD3", "HOXD4", "IRX2", "IRX5",
+  "HOXA3", "HOXA4", "HOXA5", "HOXA6",
+  "ALPL", "CKMT1A", "CKMT1B", "CKMT2", "CKB",
+  "UCP1"
+)
+
+all(genes_of_interest %in% counts_table$gene)
+# ```
+
+# ## --- Load DESeq2 comparisons ---
+# ```{r}
+pseudobulk_deseq_dge <- read.csv(DESEQ_STATS_CSV)
+head(pseudobulk_deseq_dge)
+# ```
+
+# ## --- Create plots ---
+# ```{r}
+plot_list <- list()
+
+for (plot_cells in c("ASPC", "adipo")) {
+  negate_search <- plot_cells != "ASPC"
+
+  # ensure bucket exists
+  if (is.null(plot_list[[plot_cells]])) plot_list[[plot_cells]] <- list()
+
+  for (goi in genes_of_interest) {
+    plot_data <- counts_table %>%
+      dplyr::filter(gene == goi) %>%
+      dplyr::filter(
+        neck_region != "Intermediate",
+        str_detect(cell_type, "Progenitor") |
+          str_detect(cell_type, "White") |
+          (str_detect(cell_type, "Brown") & (neck_region == "Deep")),
+        n_cells >= 10
+      ) %>%
+      mutate(
+        neck_region_short = str_replace(neck_region, "Deep", "DN"),
+        neck_region_short = str_replace(neck_region_short, "Superficial", "SC"),
+        cell_type_short = factor(cell_type_short, levels = c("ASPC", "WAds", "BAds")),
+        neck_region_short = factor(neck_region_short, levels = c("SC", "DN")),
+        region_cell_type_short = paste(neck_region_short, cell_type_short, sep = "\n")
+      )
+
+    max.y.pos <- max(plot_data$cpm_log, na.rm = TRUE) * 1.15
+
+    stat_df <- pseudobulk_deseq_dge %>%
+      dplyr::filter(
+        gene == goi,
+        contrast.1 == "Deep",
+        contrast.2 == "Superficial",
+        str_detect(cell_type, "White") |
+          str_detect(cell_type, "Progenitor") |
+          str_detect(cell_type, "Brown")
+      ) %>%
+      mutate(
+        padj = if_else(is.na(padj), 1.0, padj),
+        p.format = if_else(padj < 0.01, "<0.01", as.character(round(padj, 2))),
+        fontface = if_else(padj <= 0.05, "bold", "plain"),
+        group1 = str_replace(contrast.1, "Deep", "DN"),
+        group2 = str_replace(contrast.2, "Superficial", "SC"),
+        y.position = max.y.pos
+      ) %>%
+      left_join(plot_data %>% distinct(cell_type, cell_type_short),
+        by = "cell_type", multiple = "first"
+      )
+
+
+    # Remove ASPCS from thermogenic genes plot
+    if (goi %in% c(
+      "MECOM", "EBF2", "PRDM16", "COBL", "PPARGC1A",
+      "ADIPOQ", "PLIN1", "PLIN4", "FABP4", "LEP", "SLC7A10",
+      "ALPL", "CKMT1A", "CKMT1B", "CKMT2", "CKB", "UCP1"
+    )) {
+      plot_data <- plot_data %>%
+        dplyr::filter(str_detect(cell_type_short, "ASPC", negate = negate_search))
+
+      stat_df <- stat_df %>%
+        dplyr::filter(str_detect(cell_type, "Progenitor", negate = negate_search))
+    }
+
+    p <- ggplot(plot_data, aes(x = neck_region_short, y = cpm_log)) +
+      geom_line(aes(group = subject), alpha = 0.5, linewidth = 0.1) +
+      geom_point(aes(fill = cell_type), size = 1, shape = 21, color = "black") +
+      facet_grid(. ~ cell_type_short, scales = "free_x", space = "free_x") +
+      scale_x_discrete(drop = TRUE) +
+      theme_nature_metabolism(base_size = 6) +
+      theme(
+        strip.background = element_blank(),
+        strip.text = element_text(size = 5, face = "bold")
+      ) +
+      scale_fill_manual(values = palette.use, guide = NULL) +
+      labs(title = goi, y = "Mean expression\n(log1p CPM)", x = NULL) +
+      coord_cartesian(clip = FALSE)
+
+    # only add p-value brackets if they exist and are usable
+    stat_df_ok <- nrow(stat_df) > 0 &&
+      all(c("group1", "group2", "y.position", "p.format", "fontface") %in% names(stat_df)) &&
+      !all(is.na(stat_df$group1)) &&
+      !all(is.na(stat_df$group2))
+
+    if (stat_df_ok) {
+      p <- p +
+        stat_pvalue_manual(
+          data = stat_df,
+          xmin = "group1",
+          xmax = "group2",
+          inherit.aes = FALSE,
+          label = "p.format",
+          fontface = "fontface",
+          size = 5 / ggplot2::.pt,
+          y.position = "y.position",
+          bracket.size = 0.2,
+          tip.length = 0
+        )
+    }
+
+    plot_list[[plot_cells]][[goi]] <- p
+  }
+}
+
+# ```
+
+
+# # --- Panel 6A, S5A. Thermogenic genes ---
+# ## --- Plotting and save ---
+# ```{r, warning=F, message=FALSE, fig.width=4.049492, fig.height=1.181102}
+mm_to_in(c(102.8571, 30))
+for (plot_cells in c("ASPC", "adipo")) {
+  # Plot and make small adjustments
+  gg_thermo_lineplot <- wrap_plots(plot_list[[plot_cells]][c("MECOM", "EBF2", "PRDM16", "PPARGC1A")], ncol = 4) +
+    plot_annotation(
+      title = "Thermogenic Transcriptional Regulators",
+      theme = theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, margin = margin(b = 0)))
+    ) &
+    scale_y_continuous(expand = expansion(c(0.05, 0.15))) &
+    theme(axis.text.x = element_text(size = 5)) +
+      theme(plot.tag = element_text(size = 6, face = "bold"))
+
+  print(gg_thermo_lineplot)
+
+  if (plot_cells == "ASPC") {
+    ggsave(file.path(OUTPUT_DIR, "S5A_thermo_lineplot_aspc.pdf"), gg_thermo_lineplot, width = 102.8571, height = 30, units = "mm", bg = "white", dpi = 600)
+  } else if (tolower(plot_cells) == "adipo") {
+    ggsave(file.path(OUTPUT_DIR, "6A_thermo_lineplot_adipo.pdf"), gg_thermo_lineplot, width = 102.8571, height = 30, units = "mm", bg = "white", dpi = 600)
+  }
+}
+# ```
+# ## --- Record N ---
+# ```{r}
+for (plot_cells in c("ASPC", "adipo")) {
+  plot_n <- plot_list[[plot_cells]]$HOXA3$data |> count(neck_region, cell_type_short)
+  print(plot_n)
+}
+# ```
+
+# # --- Panel 6C. White Adipocyte genes ---
+# ## --- Plotting and save ---
+# ```{r, warning=F, message=FALSE, fig.width=3.037122, fig.height=1.181102}
+mm_to_in(c(77.1429, 30))
+
+gg_adipo_lineplot <- wrap_plots(plot_list[["adipo"]][c("PLIN4", "LEP", "SLC7A10")], ncol = 3) +
+  plot_annotation(
+    title = "White Adipocyte-Enriched Genes",
+    theme = theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, margin = margin(b = 0)))
+  ) &
+  scale_y_continuous(expand = expansion(c(0.05, 0.15))) &
+  theme(axis.text.x = element_text(size = 5))
+
+gg_adipo_lineplot
+ggsave(file.path(OUTPUT_DIR, "6C_adipo_lineplot.pdf"), gg_adipo_lineplot, width = 77.1429, height = 30, units = "mm", bg = "white", dpi = 600)
+# ```
+
+# # --- Panel 6E. Deep HOX genes ---
+# ## --- Plotting and save ---
+# ```{r, warning=F, message=FALSE, fig.width=4.921260, fig.height=1.181102}
+mm_to_in(c(125, 30))
+
+gg_hox_deep_lineplot <- wrap_plots(plot_list[["adipo"]][c("HOXA3", "HOXA4", "HOXA5", "HOXA6")], ncol = 4) +
+  plot_annotation(
+    title = "Deep-Enriched Developmental Patterning Genes",
+    theme = theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, margin = margin(b = 0)))
+  ) &
+  scale_y_continuous(expand = expansion(c(0.05, 0.15))) &
+  theme(axis.text.x = element_text(size = 5), strip.text = element_text(size = 5)) + theme(plot.tag = element_text(size = 6, face = "bold"))
+gg_hox_deep_lineplot
+
+ggsave(file.path(OUTPUT_DIR, "6E_hox_deep_lineplot.pdf"), gg_hox_deep_lineplot, width = 125, height = 30, units = "mm", bg = "white", dpi = 600)
+# ```
+
+# ## --- Panel 6F. Superficial HOX genes ---
+# ```{r, warning=F, message=FALSE, fig.width=7.086614, fig.height=1.181102}
+mm_to_in(c(180, 30))
+gg_hox_sup_lineplot <- wrap_plots(plot_list[["adipo"]][c("PAX3", "HOXD3", "HOXD4", "IRX2", "IRX5")], ncol = 5) +
+  plot_annotation(
+    title = "Superficial-Enriched Developmental Patterning Genes",
+    theme = theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, margin = margin(b = 0)))
+  ) &
+  scale_y_continuous(expand = expansion(c(0.05, 0.15))) &
+  theme(axis.text.x = element_text(size = 5), strip.text = element_text(size = 5)) + theme(plot.tag = element_text(size = 6, face = "bold"))
+gg_hox_sup_lineplot
+
+ggsave(file.path(OUTPUT_DIR, "6F_hox_sup_lineplot.pdf"), gg_hox_sup_lineplot, width = 180, height = 30, units = "mm", bg = "white", dpi = 600)
+# ```
+
+
+# # --- Panel 6B, S5B. VISION in Adipocytes ---
+# ## --- Load seurat ---
+# ```{r}
+s.object <- readRDS(SEURAT_INPUT)
+# ```
+
+## --- Laod VISION ---
+# ``` {r}
+camara_sigscores <- readr::read_csv(
+  CAMARAH_VISION_CSV,
+  col_types = "cddcccccdccc"
+)
+
+# Extract metadata
+meta <- s.object@meta.data %>%
+  select(cell_type, cell_type_short, sample, neck_region, subject) %>%
+  rownames_to_column("barcode")
+
+# # generate combined final data.frame
+graph.data.long <- camara_sigscores %>%
+  rename(neck_region = region) %>%
+  left_join(meta, by = "barcode", suffix = c("", ".meta"))
+
+# ```
+
+# ## --- Rename signatures ---
+# ```{r}
+graph.data.renamed <- graph.data.long %>%
+  mutate(
+    Hallmark = str_replace_all(Hallmark, "_", " "),
+    Hallmark = str_replace_all(Hallmark, "SIGNATURE", ""),
+    Hallmark = str_remove_all(Hallmark, "GOBP "),
+    Hallmark = str_remove_all(Hallmark, "HALLMARK "),
+    Hallmark = case_when(
+      str_detect(Hallmark, "OXIDATIVE PHOSPHORYLATION") ~ "OXPHOS",
+      str_detect(Hallmark, "FATTY ACID") ~ "FA METABOLISM",
+      str_detect(Hallmark, "G2M") ~ "G2M",
+      str_detect(Hallmark, "REACTIVE OXYGEN") ~ "ROS",
+      str_detect(Hallmark, "UNFOLDED PROTEIN") ~ "UPR",
+      TRUE ~ Hallmark
+    )
+  )
+# ```
+
+
+# ## --- Define signature to plot ---
+# ```{r, fig.width=7.09, fig.height=1.77}
+round(digits = 2, mm_to_in(c(180, 180 / 4)))
+
+# Determine paths to plot
+distinct(graph.data.renamed, Hallmark) %>% arrange(Hallmark)
+
+signatures_of_interest <- c(
+  # "CELLULAR RESPIRATION",
+  #                   "AEROBIC RESPIRATION",
+  "ADAPTIVE THERMOGENESIS",
+  "BATLAS",
+  "HEAT"
+)
+
+# Filter to plot
+graph.data.filter <- graph.data.renamed %>%
+  dplyr::filter(Hallmark %in% signatures_of_interest, cell_type_short %in% c("BAds", "WAds")) |>
+  mutate(Hallmark = factor(Hallmark, levels = signatures_of_interest))
+
+# ```
+
+# # --- Panel S5B. VISION Feature Plot in Adipocytes ---
+# ## --- Plotting and save ---
+# ```{r, fig.width=2.362205* 1.7, fig.height=0.7874016* 1.7}
+mm_to_in(c(60, 20))
+scale_factor <- 1.7
+
+
+hallmark_umap_plot_list <- list()
+for (hallmark in unique(graph.data.filter$Hallmark)) {
+  gg_sup_a <- ggplot(graph.data.filter |>
+    dplyr::filter(Hallmark == hallmark, neck_region != "Intermediate") |>
+    mutate(Hallmark = str_wrap(Hallmark, width = 8))) +
+    aes(x = umap_1, y = umap_2, color = sigScores) +
+    geom_point(size = 0.5, alpha = 0.7) +
+    scale_color_viridis(
+      option = "viridis",
+      limits = c(-0.3, 2.6)
+    ) +
+    labs(
+      x = "UMAP Dimension 1",
+      y = "UMAP Dimension 2",
+      color = "Signature Scores"
+    ) +
+    theme_void() +
+    theme_nature_metabolism(base_size = 6 * scale_factor) +
+    theme_no_axis() +
+    # remove strip
+    theme(
+      legend.position = "right",
+      strip.text = element_text(size = 5 * scale_factor, face = "plain"),
+      strip.background = element_rect(fill = "white", colour = "white"), plot = element_blank()
+    ) +
+    facet_wrap(vars(neck_region)) +
+    labs(title = hallmark) +
+    coord_cartesian(clip = "off")
+
+  hallmark_umap_plot_list[[hallmark]] <- gg_sup_a
+
+  ggsave(file.path(OUTPUT_DIR, paste0("S5B_vision_umapplot_", hallmark, ".pdf")), gg_sup_a, width = 60 * scale_factor, height = 20 * scale_factor, units = "mm", bg = "white", dpi = 600)
+}
+
+hallmark_umap_plot_list
+# ```
+
+# # --- Panel 6B. Mean signature in WAds per subject Connected DotPlot ---
+# ## --- Create plots ---
+# ```{r, fig.width=7.09, fig.height=1.77}
+# Filter for White Adipocytes only
+mean_sig_data <- graph.data.filter %>%
+  dplyr::filter(
+    (
+      cell_type == "White Adipocytes" & neck_region != "Intermediate" | cell_type == "Brown Adipocytes" & neck_region == "Deep"
+    )
+  ) %>%
+  group_by(sample, cell_type, Hallmark, subject, neck_region) %>%
+  summarise(mean_score = mean(sigScores), .groups = "drop")
+
+
+# Filter out samples with less than 10 cells
+cells_to_keep <- meta %>%
+  count(sample, cell_type) %>%
+  dplyr::filter(n >= 10) %>%
+  mutate(sample_cell_type = paste(sample, cell_type, sep = "_")) %>%
+  pull(sample_cell_type)
+
+mean_sig_data %>% count(sample, cell_type)
+mean_sig_data <- mean_sig_data %>% dplyr::filter(paste(sample, cell_type, sep = "_") %in% cells_to_keep)
+
+
+plot_list <- list()
+for (sig in unique(mean_sig_data$Hallmark)) {
+  plot_data <- mean_sig_data %>% dplyr::filter(Hallmark == sig)
+  plot_data <- plot_data %>% mutate(region_cell_type = case_when(
+    cell_type == "White Adipocytes" ~ paste(neck_region, "WAds", sep = "\n"),
+    cell_type == "Brown Adipocytes" ~ paste(neck_region, "BAds", sep = "\n")
+  ))
+  plot_data <- plot_data %>% mutate(Hallmark = str_wrap(as.character(Hallmark), width = 5))
+  max.y.pos <- max(plot_data$mean_score)
+  min.y.pos <- min(plot_data$mean_score)
+
+  # --- Calculate statistics ---
+  # Define the comparisons explicitly
+  comparisons_df <- tibble::tribble(
+    ~group1,              ~group2,
+    "Deep\nWAds",         "Superficial\nWAds",
+    "Deep\nWAds",         "Deep\nBAds"
+  )
+
+  # Compute t tests manually
+  stat_df <- comparisons_df %>%
+    rowwise() %>%
+    mutate(
+      p.value = t.test(
+        plot_data$mean_score[plot_data$region_cell_type == group1],
+        plot_data$mean_score[plot_data$region_cell_type == group2]
+      )$p.value
+    ) %>%
+    ungroup() %>%
+    mutate(
+      label = case_when(
+        p.value < 0.01 ~ "<0.01",
+        TRUE ~ formatC(p.value, digits = 2, format = "f")
+      ),
+      y.position = max.y.pos * 1.10,
+      colors = ifelse(p.value < 0.05, "red", "black"),
+      fontface = ifelse(p.value < 0.05, "bold", "plain")
+    )
+
+  p <- ggplot(plot_data, aes(x = region_cell_type, y = mean_score)) +
+    geom_line(aes(group = subject), alpha = 0.5) +
+    geom_point(size = 1, shape = 21, aes(fill = cell_type), color = "black") +
+    facet_wrap(vars(Hallmark), scales = "free") +
+    scale_y_continuous(limits = c(min.y.pos * 0.98, max.y.pos * 1.15)) +
+    scale_x_discrete(
+      limits = c("Superficial\nWAds", "Deep\nWAds", "Deep\nBAds"),
+      labels = c("SC\nWAds", "DN\nWAds", "DN\nBAds")
+    ) +
+    scale_fill_manual(values = palette.use) +
+    theme_nature_metabolism(base_size = 6) +
+    theme(
+      strip.background = element_blank(), # <- removes grey background
+      strip.text = element_text(size = 5),
+      legend.position = "none"
+      # axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+    ) +
+    labs(
+      y = "Mean Signature Score\n(VISION)",
+      x = NULL
+    )
+  plot_list[[sig]] <- p +
+    stat_pvalue_manual(
+      stat_df,
+      label = "label",
+      fontface = "fontface",
+      y.position = "y.position",
+      bracket.size = 0.2,
+      size = 5 / ggplot2::.pt
+    )
+}
+# ```
+
+# ## --- Plotting and save ---
+# ```{r, warning=F, message=FALSE, fig.width=3.937008, fig.height=1.181102}
+mm_to_in(c(100, 30))
+plotting_order <- signatures_of_interest
+
+plot_list
+
+# Combine with patchwork (e.g., 2 columns)
+gg_b <- wrap_plots(plot_list[plotting_order], ncol = length(plotting_order))
+gg_b <- gg_b + plot_annotation(
+  title = "Thermogenesis-Associated Signature Score",
+  theme = theme(plot.title = element_text(size = 6, face = "bold", hjust = 0.5, margin = margin(b = 0)))
+) &
+  scale_y_continuous(expand = expansion(c(0.05, 0.15))) &
+  theme(axis.text.x = element_text(size = 5), strip.text = element_text(size = 5)) + theme(plot.tag = element_text(size = 6, face = "bold"))
+gg_b
+
+scale <- length(plotting_order)
+ggsave(file.path(OUTPUT_DIR, "6B_adipo_vision_lineplot.pdf"), gg_b, width = 100, height = 30, units = "mm", bg = "white", dpi = 600)
+# ```
+
+# ## --- Record N ---
+# ```{r}
+# Retained sample N
+vision_vln_n <- plot_list[[1]]$data |> count(region_cell_type)
+vision_vln_n
+
+kept_samples <- plot_list[[1]]$data |>
+  distinct(sample) |>
+  pull(sample)
+
+# Original nuclei N
+vision_vln_nuclei_n <- graph.data.filter %>%
+  distinct(barcode, .keep_all = TRUE) |>
+  dplyr::filter(
+    (
+      cell_type == "White Adipocytes" & neck_region != "Intermediate" | cell_type == "Brown Adipocytes" & neck_region == "Deep"
+    )
+  ) %>%
+  count(cell_type_short, sample, neck_region) |>
+  dplyr::filter(n > 10) |>
+  group_by(cell_type_short, neck_region) |>
+  summarise(sum(n))
+vision_vln_nuclei_n
+# ```
+
+# # --- Panel S5E. HOX genes heatmap in Salej Durant 2025 and Din et al 2018 ---
+# ## --- Redefine dataset names ---
+# ```{r}
+## Create data frame to map names
+dataset_keys <- data.frame(
+  dataset_name = c("Castella", "Din", "Gavrila", "Giroud", "Ohja"),
+  full_name = c("Castella et al. 2023", "Din et al. 2018", "Salej et al. 2025", "Giroud et al. 2023", "Ojha et al. 2016")
+) |> column_to_rownames("dataset_name")
+# ```
+
+# ## --- Plotting and saving ---
+# ```{r}
+#--- Determine files to loop over
+# Expression files
+exp_files <- list.files(BULK_DIR, full.names = TRUE)
+cleaned_files <- grep("_Cleaned", exp_files, value = TRUE)
+
+# Metadata files
+meta_files <- list.files(BULK_META_DIR, full.names = TRUE)
+
+# Define dataset names
+dataset_names <- c("Gavrila", "Din")
+
+
+for (dataset in dataset_names) {
+  # --- Read in the data ---
+  object <- read.csv(str_subset(cleaned_files, dataset), header = TRUE, row.names = 1)
+
+  meta <- read.csv(str_subset(meta_files, dataset))
+
+  meta$group <- factor(meta$group, levels = unique(meta$group[order(meta$order)]))
+  rownames(meta) <- meta$sample
+
+  if (dataset == "Ohja") {
+    idx <- match(names(object), meta$sample)
+    names(object) <- meta$group[idx]
+    names(object) <- make.unique(names(object))
+    rownames(meta)[idx] <- names(object)
+  }
+
+  meta <- meta %>%
+    select(group) |>
+    mutate(group = case_when(
+      grepl("WAT|SC", rownames(meta)) ~ "Superficial",
+      grepl("BAT|Deep", rownames(meta)) ~ "Deep",
+      TRUE ~ group
+    ))
+
+
+  # Reorder
+  col_order <- c(
+    grep("WAT|SC|C", names(object), value = TRUE),
+    grep("BAT|Deep|F", names(object), value = TRUE),
+    grep("Neonate", names(object), value = TRUE),
+    grep("Infant", names(object), value = TRUE),
+    grep("Child", names(object), value = TRUE)
+  )
+
+  heatmap <- object[, col_order] %>%
+    as.matrix()
+
+  if (dataset == "Din") {
+    first_break <- 15
+  } else if (dataset == "Gavrila") {
+    first_break <- 14
+  } else {
+    first_break <- 0
+  }
+
+  # Colors
+  dev_age_color <- c("Child" = "orchid4", "Infant" = "orchid3", "Neonate" = "orchid1")
+  pheo_color <- c("control" = "grey25", "pheochromocytoma" = "darkgreen", "Control" = "grey25", "Pheo" = "darkgreen")
+  annotation_colors <- list(group = c(neck.color, dev_age_color, pheo_color))
+
+  annotation_colors$group <- annotation_colors$group[names(annotation_colors$group) %in% meta$group]
+
+  custom.order <- c("PAX3", "HOXD3", "HOXD4", "IRX2", "IRX5", "HOXA3", "HOXA4", "HOXA5", "HOXA6")
+  pdf(file.path(OUTPUT_DIR, paste("S5E", dataset, "hox_heatmap.pdf", sep = "_")), width = mm_to_in(180), height = mm_to_in(60))
+  # # --- Plot heatmap ---
+  mat <- heatmap[custom.order, , drop = FALSE]
+
+  print(pheatmap(mat,
+    cluster_cols = FALSE,
+    cluster_rows = FALSE,
+    show_colnames = FALSE,
+    cellwidth = 5,
+    cellheight = 5.5,
+    fontsize = 6,
+    gaps_row = 5,
+    gaps_col = first_break,
+    legend = TRUE,
+    annotation_col = meta,
+    annotation_colors = annotation_colors,
+    scale = "row",
+    main = dataset_keys[dataset, ]
+  ))
+  dev.off()
+}
+# ```
+
+# --- Panel 6G,H. Chromatin Accessibility  ---
+
+# Panels 6G-H correspond to chromatin accessibility coverage plots generated
+# from the multiome/Signac object.
+#
+# These panels are not regenerated in the Code Ocean capsule because the
+# underlying fragment files/indexes required by Signac CoveragePlot are
+# controlled-access and are not included in the capsule. The processed multiome
+# object is provided where permitted, and the original plotting code is retained
+# below as a reference but is not executed in the default reproducible run.
+#
+# The final manuscript panels were generated upstream using Signac CoveragePlot
+# from the multiome object and corresponding fragment files.
+
+# query_obj <- readRDS(MULTIOME_SEURAT_RDS)
+#
+# stopifnot("peaks" %in% Assays(query_obj))
+# DefaultAssay(query_obj) <- "peaks"
+# ann <- Annotation(query_obj)
+# seqlevels(ann) <- paste0("chr", gsub("^(chr)+", "", seqlevels(ann)))
+# Annotation(query_obj[["peaks"]]) <- ann
+#
+# old_idents <- Idents(query_obj)
+#
+# query_obj$cell_type_neck_region <- paste(
+#   query_obj$cell_type_short,
+#   query_obj$neck_region,
+#   sep = "_"
+# )
+#
+# Idents(query_obj) <- "cell_type_neck_region"
+#
+# idents_query <- paste0(c("WAds"), collapse = "|")
+#
+# idents_to_plot <- grep(
+#   idents_query,
+#   unique(query_obj$cell_type_neck_region),
+#   value = TRUE
+# )
+#
+# idents_to_plot <- grep(
+#   pattern = "Intermediate",
+#   idents_to_plot,
+#   value = TRUE,
+#   invert = TRUE
+# )
+#
+# features <- c("HOXA3", "PAX3")
+#
+# id_levels <- levels(Idents(query_obj))
+# neck_region_from_ident <- sub("^.*_", "", id_levels)
+# ident_colors <- setNames(neck.color[neck_region_from_ident], id_levels)
+#
+# for (goi in features) {
+#   scale_factor <- 2
+#
+#   p <- CoveragePlot(
+#     query_obj,
+#     region = goi,
+#     features = goi,
+#     assay = "peaks",
+#     expression.assay = "SCT",
+#     peaks = TRUE,
+#     idents = idents_to_plot
+#   ) &
+#     scale_fill_manual(values = ident_colors) &
+#     theme(
+#       text = element_text(size = 5 * scale_factor),
+#       axis.title = element_text(size = 5 * scale_factor),
+#       axis.text = element_text(size = 5 * scale_factor),
+#       strip.text = element_text(size = 5 * scale_factor),
+#       legend.title = element_text(size = 5 * scale_factor),
+#       legend.text = element_text(size = 5 * scale_factor),
+#       axis.line = element_line(linewidth = 0.3 * scale_factor),
+#       axis.ticks = element_line(linewidth = 0.3 * scale_factor)
+#     )
+#
+#   ggsave(
+#     filename = file.path(
+#       OUTPUT_DIR,
+#       paste0("6G-H_coverage_", goi, "_", idents_query, "_by_neck.region.pdf")
+#     ),
+#     plot = p,
+#     width = 65 * scale_factor,
+#     height = 50 * scale_factor,
+#     units = "mm",
+#     bg = "white"
+#   )
+# }
+#
+# Idents(query_obj) <- old_idents
+
+# # --- Panels 6I, S5F-G. RNA Velocity  ---
+# RNA velocity panels are generated in the script at scripts/4.downstream_pipelines/4.6.rna_velocity/4.6.2.velocity_three_panels_cleaned.Rmd
