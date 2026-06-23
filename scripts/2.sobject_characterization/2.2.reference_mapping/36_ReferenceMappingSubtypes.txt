@@ -1,0 +1,555 @@
+from google.colab import drive
+drive.mount('/content/drive')
+
+!pip install --quiet scvi-colab
+from scvi_colab import install
+
+install()
+
+import os
+import tempfile
+
+import anndata
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scanpy as sc
+import scrublet as scr
+import scvi
+import seaborn as sns
+import torch
+
+neck = sc.read('/content/drive/MyDrive/NeckAdiposeProject/Dataadata_integrated_soupXoutput_with_infer_forR_temp_Dec18_modified_cleaned.h5ad')
+emont = sc.read('/content/drive/MyDrive/NeckAdiposeProject/Data/PublishedSingleCellDatasets/Emont 2022/test.h5ad')
+
+adipo_neck = neck[neck.obs['cell_type'] == 'White Adipocytes']
+adipo_emont = emont[emont.obs['cell_type2'] == 'adipocyte']
+
+del emont
+del neck
+
+sc.pp.highly_variable_genes(adipo_emont, n_top_genes=2000, batch_key='sample', subset=True)
+adipo_emont = adipo_emont[:, adipo_emont.var_names].copy()
+
+scvi.model.SCVI.setup_anndata(adipo_emont, batch_key='sample')
+scvi_ref = scvi.model.SCVI(
+    adipo_emont,
+    use_layer_norm="both",
+    use_batch_norm="none",
+    encode_covariates=True,
+    dropout_rate=0.2,
+    n_layers=2,
+)
+scvi_ref.train()
+
+SCVI_LATENT_KEY = "X_scVI"
+
+adipo_emont.obsm[SCVI_LATENT_KEY] = scvi_ref.get_latent_representation()
+sc.pp.neighbors(adipo_emont, use_rep=SCVI_LATENT_KEY)
+sc.tl.leiden(adipo_emont)
+sc.tl.umap(adipo_emont)
+save_dir = tempfile.TemporaryDirectory()
+
+scvi_ref_path = os.path.join(save_dir.name, "test")
+scvi_ref.save(scvi_ref_path, overwrite=True)
+
+sc.pl.umap(
+    adipo_emont,
+    color=["sample", "cell_type2"],
+    frameon=False,
+    ncols=1,
+)
+
+SCANVI_LABELS_KEY = "labels_scanvi"
+
+adipo_emont.obs[SCANVI_LABELS_KEY] = adipo_emont.obs["cell_type"].values
+
+scanvi_ref = scvi.model.SCANVI.from_scvi_model(
+    scvi_ref,
+    unlabeled_category="Unknown",
+    labels_key=SCANVI_LABELS_KEY,
+)
+
+scanvi_ref.train(max_epochs=20, n_samples_per_label=100)
+
+SCANVI_LATENT_KEY = "X_scANVI"
+
+adipo_emont.obsm[SCANVI_LATENT_KEY] = scanvi_ref.get_latent_representation()
+sc.pp.neighbors(adipo_emont, use_rep=SCANVI_LATENT_KEY)
+sc.tl.leiden(adipo_emont)
+sc.tl.umap(adipo_emont)
+
+sc.pl.umap(
+    adipo_emont,
+    color=["sample", "cell_type"],
+    frameon=False,
+    ncols=1,
+)
+
+scanvi_ref_path = os.path.join(save_dir.name, "emont_scanvi_ref")
+scanvi_ref.save(scanvi_ref_path, overwrite=True)
+
+scvi.model.SCANVI.prepare_query_anndata(adipo_neck, scanvi_ref_path)
+
+scanvi_query = scvi.model.SCANVI.load_query_data(adipo_neck, scanvi_ref_path)
+
+scanvi_query.train(
+    max_epochs=100,
+    plan_kwargs={"weight_decay": 0.0},
+    check_val_every_n_epoch=10,
+)
+
+SCANVI_PREDICTIONS_KEY = "predictions_scanvi"
+
+adipo_neck.obsm[SCANVI_LATENT_KEY] = scanvi_query.get_latent_representation()
+adipo_neck.obs[SCANVI_PREDICTIONS_KEY] = scanvi_query.predict()
+
+df = adipo_neck.obs.groupby(["cell_type", SCANVI_PREDICTIONS_KEY]).size().unstack(fill_value=0)
+norm_df = df / df.sum(axis=0)
+
+plt.figure(figsize=(8, 8))
+_ = plt.pcolor(norm_df)
+_ = plt.xticks(np.arange(0.5, len(df.columns), 1), df.columns, rotation=90)
+_ = plt.yticks(np.arange(0.5, len(df.index), 1), df.index)
+plt.xlabel("Predicted")
+plt.ylabel("Observed")
+
+combined = anndata.concat([adipo_neck, adipo_emont], label="batch")
+combined
+
+combined.obs["batch"] = combined.obs["batch"].cat.rename_categories(
+    ["Query", "Reference"]
+)
+
+full_predictions = scanvi_query.predict(combined)
+print(f"Acc: {np.mean(full_predictions == combined.obs['cell_type'])}")
+
+combined.obs[SCANVI_PREDICTIONS_KEY] = full_predictions
+
+
+
+sc.pp.neighbors(combined, use_rep=SCANVI_LATENT_KEY)
+sc.tl.leiden(combined)
+sc.tl.umap(combined)
+
+sc.pl.umap(
+    combined,
+    color=["sample", "cell_type"],
+    frameon=False,
+    ncols=1,
+)
+
+ax = sc.pl.umap(
+    combined,
+    frameon=False,
+    show=False,
+)
+sc.pl.umap(
+    combined[: adipo_neck.n_obs],
+    color=[SCANVI_PREDICTIONS_KEY],
+    frameon=False,
+    title="Query predictions",
+    ax=ax,
+    alpha=0.7,
+)
+
+ax = sc.pl.umap(
+    combined,
+    frameon=False,
+    show=False,
+)
+sc.pl.umap(
+    combined[: adipo_neck.n_obs],
+    color=["cell_type"],
+    frameon=False,
+    title="Query observed cell types",
+    ax=ax,
+    alpha=0.7,
+)
+
+predict_neck_adipo = adipo_neck.obs[['subject', 'sample', 'neck_region', 'predictions_scanvi']]
+
+counts_df = predict_neck_adipo.groupby(['sample', 'neck_region', 'predictions_scanvi']).size().unstack(fill_value=0)
+counts_df['total'] = counts_df.sum(axis=1)
+counts_df = counts_df.div(counts_df['total'], axis=0)
+counts_df = counts_df.drop(columns=['total'])
+counts_df = counts_df.reset_index()
+print(counts_df)
+
+subclusters = counts_df.columns[2:9].tolist()
+
+boxplot = counts_df.melt(id_vars = ['sample', 'neck_region'],
+                         value_vars = subclusters)
+boxplot
+
+
+sns.boxplot(data=boxplot, x='predictions_scanvi', y='value', hue='neck_region')
+plt.show()
+
+boxplot.to_csv('/content/drive/MyDrive/NeckAdiposeProject/Output/36.ReferenceMapping/adipo_boxplot.csv')
+combined.write('/content/drive/MyDrive/NeckAdiposeProject/Output/36.ReferenceMapping/adipo_combined.h5ad')
+
+apc_neck = neck[neck.obs['cell_type'] == 'Adipocyte Progenitor Cells']
+apc_emont = emont[emont.obs['cell_type2'] == 'ASPC']
+
+del emont
+del neck
+
+sc.pp.highly_variable_genes(apc_emont, n_top_genes=2000, batch_key='sample', subset=True)
+apc_emont = apc_emont[:, apc_emont.var_names].copy()
+
+scvi.model.SCVI.setup_anndata(apc_emont, batch_key='sample')
+scvi_ref = scvi.model.SCVI(
+    apc_emont,
+    use_layer_norm="both",
+    use_batch_norm="none",
+    encode_covariates=True,
+    dropout_rate=0.2,
+    n_layers=2,
+)
+scvi_ref.train()
+
+SCVI_LATENT_KEY = "X_scVI"
+
+apc_emont.obsm[SCVI_LATENT_KEY] = scvi_ref.get_latent_representation()
+sc.pp.neighbors(apc_emont, use_rep=SCVI_LATENT_KEY)
+sc.tl.leiden(apc_emont)
+sc.tl.umap(apc_emont)
+save_dir = tempfile.TemporaryDirectory()
+
+scvi_ref_path = os.path.join(save_dir.name, "test")
+scvi_ref.save(scvi_ref_path, overwrite=True)
+
+sc.pl.umap(
+    apc_emont,
+    color=["sample", "cell_type2"],
+    frameon=False,
+    ncols=1,
+)
+
+SCANVI_LABELS_KEY = "labels_scanvi"
+
+apc_emont.obs[SCANVI_LABELS_KEY] = apc_emont.obs["cell_type"].values
+
+scanvi_ref = scvi.model.SCANVI.from_scvi_model(
+    scvi_ref,
+    unlabeled_category="Unknown",
+    labels_key=SCANVI_LABELS_KEY,
+)
+
+scanvi_ref.train(max_epochs=20, n_samples_per_label=100)
+
+SCANVI_LATENT_KEY = "X_scANVI"
+
+apc_emont.obsm[SCANVI_LATENT_KEY] = scanvi_ref.get_latent_representation()
+sc.pp.neighbors(apc_emont, use_rep=SCANVI_LATENT_KEY)
+sc.tl.leiden(apc_emont)
+sc.tl.umap(apc_emont)
+
+sc.pl.umap(
+    apc_emont,
+    color=["sample", "cell_type"],
+    frameon=False,
+    ncols=1,
+)
+
+scanvi_ref_path = os.path.join(save_dir.name, "emont_scanvi_ref")
+scanvi_ref.save(scanvi_ref_path, overwrite=True)
+
+scvi.model.SCANVI.prepare_query_anndata(apc_neck, scanvi_ref_path)
+
+scanvi_query = scvi.model.SCANVI.load_query_data(apc_neck, scanvi_ref_path)
+
+scanvi_query.train(
+    max_epochs=100,
+    plan_kwargs={"weight_decay": 0.0},
+    check_val_every_n_epoch=10,
+)
+
+SCANVI_PREDICTIONS_KEY = "predictions_scanvi"
+
+apc_neck.obsm[SCANVI_LATENT_KEY] = scanvi_query.get_latent_representation()
+apc_neck.obs[SCANVI_PREDICTIONS_KEY] = scanvi_query.predict()
+
+df = apc_neck.obs.groupby(["cell_type", SCANVI_PREDICTIONS_KEY]).size().unstack(fill_value=0)
+norm_df = df / df.sum(axis=0)
+
+plt.figure(figsize=(8, 8))
+_ = plt.pcolor(norm_df)
+_ = plt.xticks(np.arange(0.5, len(df.columns), 1), df.columns, rotation=90)
+_ = plt.yticks(np.arange(0.5, len(df.index), 1), df.index)
+plt.xlabel("Predicted")
+plt.ylabel("Observed")
+
+combined = anndata.concat([apc_neck, apc_emont], label="batch")
+combined
+
+combined.obs["batch"] = combined.obs["batch"].cat.rename_categories(
+    ["Query", "Reference"]
+)
+
+full_predictions = scanvi_query.predict(combined)
+print(f"Acc: {np.mean(full_predictions == combined.obs['cell_type'])}")
+
+combined.obs[SCANVI_PREDICTIONS_KEY] = full_predictions
+
+
+sc.pp.neighbors(combined, use_rep=SCANVI_LATENT_KEY)
+sc.tl.leiden(combined)
+sc.tl.umap(combined)
+
+sc.pl.umap(
+    combined,
+    color=["cell_type"],
+    frameon=False,
+    ncols=1,
+)
+
+ax = sc.pl.umap(
+    combined,
+    frameon=False,
+    show=False,
+)
+sc.pl.umap(
+    combined[: apc_neck.n_obs],
+    color=[SCANVI_PREDICTIONS_KEY],
+    frameon=False,
+    title="Query predictions",
+    ax=ax,
+    alpha=0.7,
+)
+
+
+predict_neck_apc = apc_neck.obs[['subject', 'sample', 'neck_region', 'predictions_scanvi']]
+
+counts_df = predict_neck_apc.groupby(['sample', 'neck_region', 'predictions_scanvi']).size().unstack(fill_value=0)
+counts_df['total'] = counts_df.sum(axis=1)
+counts_df = counts_df.div(counts_df['total'], axis=0)
+counts_df = counts_df.drop(columns=['total'])
+counts_df = counts_df.reset_index()
+print(counts_df)
+
+subclusters = counts_df.columns[2:9].tolist()
+
+boxplot = counts_df.melt(id_vars = ['sample', 'neck_region'],
+                         value_vars = subclusters)
+
+
+sns.boxplot(data=boxplot, x='predictions_scanvi', y='value', hue='neck_region')
+plt.show()
+
+boxplot.to_csv('/content/drive/MyDrive/NeckAdiposeProject/Output/36.ReferenceMapping/aspc_boxplot.csv')
+combined.write('/content/drive/MyDrive/NeckAdiposeProject/Output/36.ReferenceMapping/aspc_combined.h5ad')
+
+sc.pp.highly_variable_genes(emont, n_top_genes=2000, batch_key='sample', subset=True)
+
+emont = emont[:, emont.var_names].copy()
+
+scvi.model.SCVI.setup_anndata(emont, batch_key='sample')
+
+scvi_ref = scvi.model.SCVI(
+    emont,
+    use_layer_norm="both",
+    use_batch_norm="none",
+    encode_covariates=True,
+    dropout_rate=0.2,
+    n_layers=2,
+)
+scvi_ref.train()
+
+SCVI_LATENT_KEY = "X_scVI"
+
+emont.obsm[SCVI_LATENT_KEY] = scvi_ref.get_latent_representation()
+sc.pp.neighbors(emont, use_rep=SCVI_LATENT_KEY)
+sc.tl.leiden(emont)
+sc.tl.umap(emont)
+
+save_dir = tempfile.TemporaryDirectory()
+
+scvi_ref_path = os.path.join(save_dir.name, "test")
+scvi_ref.save(scvi_ref_path, overwrite=True)
+
+sc.pl.umap(
+    emont,
+    color=["sample", "cell_type2"],
+    frameon=False,
+    ncols=1,
+)
+
+# both are valid
+scvi.model.SCVI.prepare_query_anndata(neck, scvi_ref_path)
+scvi.model.SCVI.prepare_query_anndata(neck, scvi_ref)
+
+# both are valid
+scvi_query = scvi.model.SCVI.load_query_data(
+    neck,
+    scvi_ref_path,
+)
+scvi_query = scvi.model.SCVI.load_query_data(
+    neck,
+    scvi_ref,
+)
+
+scvi_query.train(max_epochs=200, plan_kwargs={"weight_decay": 0.0})
+neck.obsm[SCVI_LATENT_KEY] = scvi_query.get_latent_representation()
+
+sc.pp.neighbors(neck, use_rep=SCVI_LATENT_KEY)
+sc.tl.leiden(neck)
+sc.tl.umap(neck)
+
+neck
+
+sc.pl.umap(
+    neck,
+    color=["sample", "cell_type"],
+    frameon=False,
+    ncols=1,
+)
+
+combined = anndata.concat([emont, neck])
+combined
+
+combined.obsm[SCVI_LATENT_KEY] = scvi_query.get_latent_representation(combined)
+
+sc.pp.neighbors(combined, use_rep=SCVI_LATENT_KEY)
+sc.tl.leiden(combined)
+sc.tl.umap(combined)
+
+combined
+
+sc.pl.umap(
+    combined,
+    color=["sample", "celltype"],
+    frameon=False,
+    ncols=1,
+)
+
+emont.obs
+
+neck_samples = neck.obs['sample'].unique()
+emont_samples = emont.obs['sample'].unique()
+
+combined.obs['dataset'] = 'Unknown'
+
+
+combined.obs.loc[combined.obs['sample'].isin(neck_samples), 'dataset'] = 'Neck_Derived'
+combined.obs.loc[combined.obs['sample'].isin(emont_samples), 'dataset'] = 'Emont_Derived'
+
+combined.obs['sample']
+neck_samples
+
+sc.pl.umap(
+    combined,
+    color=["dataset", "cell_type"],
+    frameon=False,
+    ncols=1,
+)
+
+SCANVI_LABELS_KEY = "labels_scanvi"
+
+emont.obs[SCANVI_LABELS_KEY] = emont.obs["cell_type2"].values
+
+# unlabeled category does not exist in adata.obs[labels_key]
+# so all cells are treated as labeled
+scanvi_ref = scvi.model.SCANVI.from_scvi_model(
+    scvi_ref,
+    unlabeled_category="Unknown",
+    labels_key=SCANVI_LABELS_KEY,
+)
+
+scanvi_ref.train(max_epochs=20, n_samples_per_label=100)
+
+SCANVI_LATENT_KEY = "X_scANVI"
+
+emont.obsm[SCANVI_LATENT_KEY] = scanvi_ref.get_latent_representation()
+sc.pp.neighbors(emont, use_rep=SCANVI_LATENT_KEY)
+sc.tl.leiden(emont)
+sc.tl.umap(emont)
+
+sc.pl.umap(
+    emont,
+    color=["sample", "cell_type"],
+    frameon=False,
+    ncols=1,
+)
+
+scanvi_ref_path = os.path.join(save_dir.name, "emont_scanvi_ref")
+scanvi_ref.save(scanvi_ref_path, overwrite=True)
+
+scvi.model.SCANVI.prepare_query_anndata(neck, scanvi_ref_path)
+
+scanvi_query = scvi.model.SCANVI.load_query_data(neck, scanvi_ref_path)
+
+scanvi_query.train(
+    max_epochs=100,
+    plan_kwargs={"weight_decay": 0.0},
+    check_val_every_n_epoch=10,
+)
+
+SCANVI_PREDICTIONS_KEY = "predictions_scanvi"
+
+neck.obsm[SCANVI_LATENT_KEY] = scanvi_query.get_latent_representation()
+neck.obs[SCANVI_PREDICTIONS_KEY] = scanvi_query.predict()
+
+df = neck.obs.groupby(["cell_type", SCANVI_PREDICTIONS_KEY]).size().unstack(fill_value=0)
+norm_df = df / df.sum(axis=0)
+
+plt.figure(figsize=(8, 8))
+_ = plt.pcolor(norm_df)
+_ = plt.xticks(np.arange(0.5, len(df.columns), 1), df.columns, rotation=90)
+_ = plt.yticks(np.arange(0.5, len(df.index), 1), df.index)
+plt.xlabel("Predicted")
+plt.ylabel("Observed")
+
+neck.obs
+
+combined = anndata.concat([neck, emont], label="batch")
+combined
+
+combined.obs["batch"] = combined.obs["batch"].cat.rename_categories(
+    ["Query", "Reference"]
+)
+
+full_predictions = scanvi_query.predict(combined)
+print(f"Acc: {np.mean(full_predictions == combined.obs['cell_type'])}")
+
+combined.obs[SCANVI_PREDICTIONS_KEY] = full_predictions
+
+sc.pp.neighbors(combined, use_rep=SCANVI_LATENT_KEY)
+sc.tl.leiden(combined)
+sc.tl.umap(combined)
+
+sc.pl.umap(
+    combined,
+    color=["sample", "cell_type"],
+    frameon=False,
+    ncols=1,
+)
+
+ax = sc.pl.umap(
+    combined,
+    frameon=False,
+    show=False,
+)
+sc.pl.umap(
+    combined[: neck.n_obs],
+    color=[SCANVI_PREDICTIONS_KEY],
+    frameon=False,
+    title="Query predictions",
+    ax=ax,
+    alpha=0.7,
+)
+
+ax = sc.pl.umap(
+    combined,
+    frameon=False,
+    show=False,
+)
+sc.pl.umap(
+    combined[: neck.n_obs],
+    color=["cell_type"],
+    frameon=False,
+    title="Query observed cell types",
+    ax=ax,
+    alpha=0.7,
+)

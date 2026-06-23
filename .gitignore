@@ -106,8 +106,14 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 .RDataTmp
-
-
 # Ignore .git backup
 .git_old_history_backup
 extract_figure_inputs.R
+logs
+ocean_code_data
+figure02_03_test.log
+figure1_test.log
+figure4_test.log
+figure5_test.log
+figure6_S5_test.log
+figures1_test.log
