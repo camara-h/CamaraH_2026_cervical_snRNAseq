@@ -274,6 +274,35 @@ props_meta <- as_tibble(propeller_list$Proportions) %>%
   )
 ```
 
+# --- Panel S1A.2. ViolinPlot Markers ---
+```{r, fig.width = 3.543307, fig.height = 7.086614}
+mm_to_in(c(90, 180))
+# -----------------------------
+#  Plot S1A DotPlot in ViolinPlot format 
+# -----------------------------
+
+vln_mark_plot <- VlnPlot(
+  s.object, 
+  features = all_features, 
+  flip = TRUE, 
+  stack = TRUE, 
+  group.by = "adipo_region") + 
+  NoLegend() +
+  theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 80), line = element_line(linewidth = 0.3))
+
+
+ggsave(
+  file.path(OUTPUT_DIR, "S1A.2_vlnplot_adipocyte_markers.pdf"),
+  plot = vln_mark_plot,
+  width = 90,
+  height = 180,
+  units = "mm",
+  bg = "white",
+  dpi = 600
+)
+```
+
+
 # --- Panel S1B. Brown Adipocyte Abundance ---
 
 ```{r}
