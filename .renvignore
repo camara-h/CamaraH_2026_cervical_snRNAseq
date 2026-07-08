@@ -1,3 +1,8 @@
-^not_used/
-^.*\.bak$
-^old_analysis/
+# Ignore everything by default
+*
+
+# But allow the root scripts directory
+!/scripts/
+
+# And allow everything inside it
+!/scripts/**
