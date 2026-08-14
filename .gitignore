@@ -117,3 +117,8 @@ figure4_test.log
 figure5_test.log
 figure6_S5_test.log
 figures1_test.log
+gene_classification_output
+reference_data
+renv.lock.before-R-upgrade
+renv.lock.before-bioc-upgrade
+renv.lock.old-bioc-3.17
