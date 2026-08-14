@@ -28,7 +28,8 @@ here::here()
 # -------------------------------------------------------------------------
 library(glmGamPoi)
 library(Seurat)
-library(DESeq2)
+library(patchwork)
+# library(DESeq2)
 library(tidyverse)
 library(RColorBrewer)
 library(pheatmap)
@@ -208,7 +209,7 @@ s.object <- FindNeighbors(
 )
 
 # Using 30 dimensions improved clustering relative to earlier tests with 10
-resolutions <- c(0.8, 1.6)
+resolutions <- seq(0.01, 0.2, by = 0.01)
 
 for (res in resolutions) {
   s.object <- FindClusters(
@@ -230,6 +231,49 @@ for (res in resolutions) {
 
 plots
 ```
+
+### --- Save plots ---
+```{r}
+wrapped_plots <- wrap_plots(plots)
+ggsave(file.path(OUTPUT_FIG_DIR, "umap_clustering_resolutions_highres_0.01.png"), plot = wrapped_plots, width = 35, height = 21)
+```
+
+### --- Plot clusters per resolution ---
+```{r}
+cluster_counts <- s.object@meta.data |>
+  select(contains("RNA_snn_res.")) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = "resolution",
+    values_to = "cluster_ID"
+  ) |>
+  mutate(resolution = str_remove_all(resolution, "RNA_snn_res.")) |> 
+  group_by(resolution) |>
+  summarise(
+    n_clusters = n_distinct(cluster_ID),
+    .groups = "drop"
+  ) |>
+  arrange(resolution)
+
+cluster_counts
+
+
+## Plot
+ggplot(
+  cluster_counts,
+  aes(x = resolution, y = n_clusters)
+) +
+  geom_line() +
+  geom_point(size = 2) +
+  scale_y_continuous(breaks = scales::breaks_width(5)) +
+  labs(
+    x = "Clustering resolution",
+    y = "Number of unique clusters",
+    title = "Number of clusters across resolutions"
+  ) +
+  theme_classic()
+```
+
 
 ### Assigning clusters
 

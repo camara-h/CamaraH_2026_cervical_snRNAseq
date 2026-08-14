@@ -26,9 +26,16 @@ INPUT_GTEX_VIS_GCT <- here(
 INPUT_GTEX_PHENO <- here(
   "data", "4.gtex_adipose", "GTEx_Analysis_v10_Annotations_SubjectPhenotypesDS.txt"
 )
-INPUT_HEAT_GMT <- here(
+
+
+INPUT_HEAT_GMT <- c(here(
+  "output", "3.heat_signature", "data", "non_HEAT_UCP1_corr_signature.gmt" 
+),here(
   "output", "3.heat_signature", "data", "heat_signature.gmt"
-  )
+  ))
+
+
+
 
 OUTPUT_DIR <- here("output", "3.heat_signature", "5.gtex", "data")
 dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
@@ -50,29 +57,45 @@ argument_df <- tibble(
 # -------------------------------------------------------------------------
 # Read the HEAT signature GMT and create a GeneSetCollection
 # -------------------------------------------------------------------------
-gmt_data <- readLines(INPUT_HEAT_GMT)
-
-gmt_parsed <- lapply(gmt_data, function(line) {
-  fields <- strsplit(line, "\t")[[1]]
-  list(
-    name = fields[1],
-    description = fields[2],
-    genes = fields[-(1:2)]
-  )
-})
-
-heat_signatures <- do.call(rbind, lapply(gmt_parsed, as.data.frame))
-
-gene_set_df <- heat_signatures %>%
-  filter(genes != "") %>%
-  group_by(name) %>%
-  summarise(gene_list = list(unique(genes)), .groups = "drop")
-
-gene_sets <- lapply(seq_len(nrow(gene_set_df)), function(i) {
-  GeneSet(gene_set_df$gene_list[[i]], setName = gene_set_df$name[i])
-})
-
-heat_collection <- GeneSetCollection(gene_sets)
+for(input_gmt in INPUT_HEAT_GMT){
+  gmt_parsed <- lapply(INPUT_HEAT_GMT, function(input_gmt) {
+    
+    gmt_data <- readLines(input_gmt)
+    
+    do.call(rbind, lapply(gmt_data, function(line) {
+      fields <- strsplit(line, "\t")[[1]]
+      
+      data.frame(
+        name = fields[1],
+        description = fields[2],
+        genes = fields[-(1:2)],
+        stringsAsFactors = FALSE
+      )
+    }))
+  })
+  
+  # Combine both GMT files
+  heat_signatures <- do.call(rbind, gmt_parsed)
+  
+  # Collapse genes by signature
+  gene_set_df <- heat_signatures %>%
+    filter(genes != "") %>%
+    group_by(name) %>%
+    summarise(
+      gene_list = list(unique(genes)),
+      .groups = "drop"
+    )
+  
+  # Convert to GeneSet objects
+  gene_sets <- lapply(seq_len(nrow(gene_set_df)), function(i) {
+    GeneSet(
+      gene_set_df$gene_list[[i]],
+      setName = gene_set_df$name[i]
+    )
+  })
+  
+  heat_collection <- GeneSetCollection(gene_sets)
+}
 
 # -------------------------------------------------------------------------
 # Read GTEx subject phenotype annotations once

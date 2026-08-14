@@ -135,7 +135,12 @@ process_one_dataset <- function(input, output, mart) {
 # -------------------------------------------------------------------------
 # Connect to Ensembl once
 # -------------------------------------------------------------------------
-mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Try the US East mirror
+mart <- useEnsembl(biomart = "ensembl", 
+                   dataset = "hsapiens_gene_ensembl", 
+                   mirror = "asia")
 
 # -------------------------------------------------------------------------
 # Run in single-file mode or manifest mode

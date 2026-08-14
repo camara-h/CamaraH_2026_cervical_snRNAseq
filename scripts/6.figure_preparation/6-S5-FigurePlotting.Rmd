@@ -25,6 +25,7 @@ library(readr)
 library(viridis)
 library(tidyverse)
 library(patchwork)
+library(pheatmap)
 
 # OBS:  theme_nature_metabolism() and color palettes set on "scripts/0.environment_setup/snRNAseq_graphics_setup.R"
 source(here("scripts/0.environment_setup/snRNAseq_graphics_setup.R"))

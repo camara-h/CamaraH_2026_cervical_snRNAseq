@@ -638,6 +638,10 @@ gg_heat_featplot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigSc
 gg_heat_featplot
 ```
 
+```{r}
+sigscores_df |> distinct(Hallmark)
+```
+
 ```{r, fig.width=1.13189* scale_factor, fig.height=1.13189* scale_factor}
 mm_to_in(28.75)
 
@@ -729,31 +733,7 @@ ggsave(file.path(OUTPUT_DIR, "S2D_heat_vln_allcells.pdf"), plot = gg_heat_vln_al
 ```{r, fig.width=1.417323*4, fig.height=1.259843*4}
 mm_to_in(c(36, 32))
 graph.data <- sigscores_df %>%
-  filter(dataset == "CamaraH", Hallmark == "UCP1 correlated") %>%
-  left_join(meta_simplified, by = "barcode")
-
-# Loop over the selected signatures=======
-gg_ucp1_corr_featplot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigScores)) +
-  geom_point(size = 0.1) +
-  scale_color_viridis_c(option = "viridis", name = "Signature score (VISION)") +
-  theme_nature_metabolism(base_size = 6 * 3) +
-  theme_no_axis() +
-  theme(legend.position = "bottom") +
-  theme(
-    legend.key.size = unit(1.5 * 3, "mm"),
-    legend.text = element_text(size = 4 * 3),
-    legend.title = element_text(size = 5 * 3)
-  ) +
-  labs(title = "UCP1-correlated genes\nSignature score")
-
-gg_ucp1_corr_featplot
-```
-
-
-```{r, fig.width=1.417323*4, fig.height=1.259843*4}
-mm_to_in(c(36, 32))
-graph.data <- sigscores_df %>%
-  filter(dataset == "CamaraH", Hallmark == "UCP1 correlated") %>%
+  filter(dataset == "CamaraH", Hallmark %in% c("UCP1 correlated", "Non_HEAT UCP1 correlated", "HEAT")) %>%
   left_join(meta_simplified, by = "barcode")
 
 ### Circle the brown adipocyte cluster
@@ -774,7 +754,18 @@ theta <- pi/4
 x_lab <- cx + 2 * r * cos(theta)
 y_lab <- cy + r * sin(theta)
 
-gg_ucp1_corr_featplot_annot <- gg_ucp1_corr_featplot +
+gg_ucp1_corr_featplot_annot <- ggplot(graph.data, aes(x = umap_1, y = umap_2, color = sigScores)) +
+  geom_point(size = 0.1) +
+  scale_color_viridis_c(option = "viridis", name = "Signature score (VISION)") +
+  theme_nature_metabolism(base_size = 6 * 3) +
+  theme_no_axis() +
+  theme(legend.position = "bottom") +
+  theme(
+    legend.key.size = unit(1.5 * 3, "mm"),
+    legend.text = element_text(size = 4 * 3),
+    legend.title = element_text(size = 5 * 3)
+  ) +
+  facet_wrap(~Hallmark) +
   annotate("path",
            x = cx + r * cos(seq(0, 2*pi, length.out = 361)),
            y = cy + r * sin(seq(0, 2*pi, length.out = 361)),
@@ -789,11 +780,52 @@ gg_ucp1_corr_featplot_annot <- gg_ucp1_corr_featplot +
 ```
 
 ## --- Plotting and save ---
-```{r, fig.width=1.417323*4, fig.height=1.259843*4}
+```{r, fig.width=1.417323*4*3, fig.height=1.259843*4}
 gg_ucp1_corr_featplot_annot
 
 # Save
-ggsave(file.path(OUTPUT_DIR, "S2C_ucp1_corr_vision_featplot.pdf"), plot = gg_ucp1_corr_featplot_annot, width = 36 * 3, height = 32 * 3, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "REV_2C_ucp1_corr_vision_featplot.pdf"), plot = gg_ucp1_corr_featplot_annot, width = 36 * 3*3, height = 32 * 3, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "REV_2C_ucp1_corr_vision_featplot.png"), plot = gg_ucp1_corr_featplot_annot, width = 36 * 3*3, height = 32 * 3, units = "mm", bg = "white",  dpi = 600)
+```
+
+# --- Panel REVIEW. All UCP1 correlated Signature Violin Plot in CamaraH ---
+## --- Read the Q99 HEAT percentile of White Adipocytes ---
+
+```{r}
+wad_HEAT_percentile <- readRDS(HEAT_THRESHOLD_RDS)
+```
+
+```{r}
+# Violin in All Cells
+gg_heat_vln_allcells <- ggplot(graph.data, aes(x = cell_type_short, y = sigScores, fill = cell_type_short)) +
+  geom_hline(yintercept = wad_HEAT_percentile, color = "black", linetype = "dashed", linewidth = 0.2) +
+  geom_jitter(aes(color = cell_type_short), width = 0.2, alpha = 0.5, size = 0.5, stroke = 0) +
+  geom_violin(trim = FALSE, color = "black", linewidth = 0.3) + # <- black border here
+theme_nature_metabolism() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "in")
+  ) +
+  labs(
+    x = "Cell Type",
+    y = paste("HEAT Signature score\n(VISION)")
+  ) +
+  facet_wrap(~Hallmark, ncol = 1, scales = "free_x") +
+  scale_fill_manual(values = palette.use) +
+  scale_color_manual(values = palette.use) +
+  NoLegend()
+```
+
+## --- Plotting and save ---
+```{r, fig.width=2.362205, fig.height=1.259843*3}
+mm_to_in(c(60,32))
+gg_heat_vln_allcells
+
+scale <- 180
+ggsave(file.path(OUTPUT_DIR, "REV_2D_heat_vln_allcells.pdf"), plot = gg_heat_vln_allcells, width = 60, height = 32*3, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "REV_2D_heat_vln_allcells.png"), plot = gg_heat_vln_allcells, width = 60, height = 32*3, units = "mm", bg = "white",  dpi = 600)
 ```
 
 # --- Panel S2E-H: Enrichr HEAT signature analysis ---
@@ -921,7 +953,7 @@ for(pathway in names(plot_list)){
 ## --- Pivot signatures ---
 ```{r}
 # Set signatures of interest. This is dictate plotting order
-signatures_order <- c("HEAT", "FA METABOLISM", "OXPHOS", "BATLAS")
+signatures_order <- c("UCP1 correlated", "HEAT", "Non HEAT UCP1 correlated" ,"FA METABOLISM", "OXPHOS", "BATLAS")
 
 graph.data <- sigscores_df %>%
   filter(dataset == "CamaraH") %>%
@@ -938,8 +970,7 @@ graph.data <- sigscores_df %>%
       TRUE ~ Hallmark
     )
   ) %>%
-  mutate(Hallmark = str_remove(Hallmark, "H: ")) %>% # Fix the introduced problem of adding the H: to identify Hallmark pathways
-  filter(Hallmark %in% signatures_order)
+  mutate(Hallmark = str_remove(Hallmark, "H: "))
 
 graph.data |> distinct(Hallmark)
 sigscores_df |> distinct(Hallmark)
@@ -953,13 +984,10 @@ plot_data <- graph.data %>%
     str_detect(cell_type, "Adipocytes"),
     !str_detect(cell_type, "Pre")
   ) %>%
-  mutate(Hallmark = str_wrap(Hallmark, 5)) %>%
   left_join(meta_simplified, by = "barcode") %>%
-  mutate(Hallmark = factor(Hallmark,
-    level = str_wrap(
-      signatures_order, 5
-    )
-  ))
+  mutate(Hallmark_label = str_replace(Hallmark, pattern = "Non ", "non-"),
+    Hallmark_label = str_wrap(as.character(Hallmark_label), 5)
+  )
 ```
 
 ## --- Create plot ---
@@ -998,17 +1026,61 @@ gg_vision_adipo_vln <- ggplot(
   scale_fill_manual(values = palette.use) +
   scale_color_manual(values = palette.use) +
   scale_y_continuous(expand = expansion(c(0.05, 0.2))) +
-  facet_wrap(vars(Hallmark), ncol = 5)
+  facet_wrap(
+  vars(Hallmark),
+  ncol = 6,
+  labeller = labeller(Hallmark = label_wrap_gen(width = 5))
+)
 ```
 
 ## --- Plotting and save ---
 ```{r, fig.width=3.149606, fig.height= 1.13189}
 mm_to_in(c(80, 28.75))
-gg_vision_adipo_vln
+# 2. Figure-specific selections
+signatures_main <- c(
+  "HEAT",
+  "FA METABOLISM",
+  "OXPHOS",
+  "BATLAS"
+)
+
+main_data <- plot_data %>%
+  filter(Hallmark %in% signatures_main) %>%
+  mutate(Hallmark = factor(Hallmark, levels = signatures_main)) |> 
+  droplevels()
+
+gg_vision_adipo_vln_main <- gg_vision_adipo_vln %+% main_data
+gg_vision_adipo_vln_main
 
 scale <- 180
-ggsave(file.path(OUTPUT_DIR, "2D_vision_adipo_vln.pdf"), plot = gg_vision_adipo_vln, width = 80, height = 28.75, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "2D_vision_adipo_vln.pdf"), plot = gg_vision_adipo_vln_main, width = 80, height = 28.75, units = "mm", bg = "white",  dpi = 600)
 ```
+## --- Review Plotting and save ---
+```{r, fig.width=3.149606, fig.height= 1.13189}
+mm_to_in(c(80, 28.75))
+# 2. Figure-specific selections
+signatures_review <- c(
+  "UCP1 correlated",
+  "HEAT",
+  "Non HEAT UCP1 correlated",
+  "FA METABOLISM",
+  "OXPHOS",
+  "BATLAS"
+)
+
+main_data <- plot_data %>%
+  filter(Hallmark %in% signatures_review) %>%
+  mutate(Hallmark = factor(Hallmark, levels = signatures_review)) |> 
+  droplevels()
+
+gg_vision_adipo_vln_rev <- gg_vision_adipo_vln %+% main_data
+gg_vision_adipo_vln_rev
+
+scale <- 180
+ggsave(file.path(OUTPUT_DIR, "REV_2D_vision_adipo_vln.pdf"), plot = gg_vision_adipo_vln_rev, width = 80, height = 28.75, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "REV_2D_vision_adipo_vln.png"), plot = gg_vision_adipo_vln_rev, width = 80, height = 28.75, units = "mm", bg = "white",  dpi = 600)
+```
+
 # --- Supp_Table - Cohen's effect size (d) ---
 ```{r}
 # -----------------------------
@@ -1124,6 +1196,101 @@ eff_size_table <- eff_size_table %>%
 eff_size_table
 
 write_csv(eff_size_table, file.path(OUTPUT_DIR, "effect_size_wad_bad.csv"), col_names = TRUE)
+```
+## --- Plot effect sizes ---
+```{r}
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(stringr)
+
+eff_plot_data <- eff_size_table %>%
+  filter(feature == "gene_signature") %>%
+  mutate(
+    feature_label = feature_name %>%
+      str_replace("Non ", "non-") %>%
+      str_wrap(40),
+
+    level = factor(
+      level,
+      levels = c("nuclei", "sample"),
+      labels = c("Nuclei level", "Sample level")
+    )
+  )
+
+gg_effect_size_2 <- ggplot(
+  eff_plot_data,
+  aes(
+    x = cohen_d,
+    y = fct_reorder(feature_label, cohen_d),
+    shape = level
+  )
+) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    linewidth = 0.3
+  ) +
+  geom_errorbar(
+    aes(
+      xmin = CI_low,
+      xmax = CI_high,
+      group = level
+    ),
+    position = position_dodge(width = 0.5),
+    width = 0,
+    linewidth = 0.35
+  ) +
+  geom_point(
+    position = position_dodge(width = 0.5),
+    size = 1.7
+  ) +
+  theme_nature_metabolism() +
+  theme(
+    legend.position = "top",
+    axis.text.y = element_text(size = 5)
+  ) +
+  labs(
+    title = "BAd vs WAds",
+    x = "Effect size (Cohen's d)",
+    y = NULL,
+    shape = NULL
+  )
+```
+
+## --- Save plot ---
+### --- Full version ---
+```{r, fig.width=3.149606, fig.height=3.149606}
+mm_to_in(c(80,80))
+gg_effect_size_2
+
+ggsave(file.path(OUTPUT_DIR, "REV_vision_effect_size.pdf"), plot = gg_effect_size_2, width = 80, height = 80, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "REV_vision_effect_size.png"), plot = gg_effect_size_2, width = 80, height = 80, units = "mm", bg = "white",  dpi = 600)
+```
+
+### --- Compact version ---
+
+```{r, fig.width=2.362205, fig.height=1.574803}
+mm_to_in(c(60,40))
+signatures_review <- c(
+  "UCP1 correlated",
+  "HEAT",
+  "Non HEAT UCP1 correlated",
+  "FA METABOLISM",
+  "OXPHOS",
+  "BATLAS"
+)
+
+main_data <- eff_plot_data %>%
+  filter(feature_name %in% signatures_review)  |> 
+  droplevels()
+
+gg_effect_size_2_compact <- gg_effect_size_2 %+% main_data
+gg_effect_size_2_compact
+
+ggsave(file.path(OUTPUT_DIR, "REV_vision_effect_size_compact.pdf"), plot = gg_effect_size_2_compact, width = 60, height = 40, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "REV_vision_effect_size_compact.png"), plot = gg_effect_size_2_compact, width = 60, height = 40, units = "mm", bg = "white",  dpi = 600)
+
 ```
 
 
@@ -1341,6 +1508,10 @@ write_csv(eff_size_table, file.path(OUTPUT_DIR, "effect_size_wad_bad.csv"), col_
 ```{r}
 # Read the Q99 percentile
 wad_HEAT_percentile <- readRDS(HEAT_THRESHOLD_RDS)
+```
+
+```{r}
+sigscores_df |> distinct(Hallmark, dataset)
 ```
 
 ## --- Create plot data ---
@@ -2099,7 +2270,7 @@ for (dataset in dataset_names) {
   # --- Plotting HEAT vs UCP1 ---
   gg_2 <- ggplot(
   ucp1vHEAT,
-  aes(x = HEAT, y = log10(UCP1 + 1), color = group)
+  aes(x = Non_HEAT.UCP1.correlated, y = log10(UCP1 + 1), color = group)
 ) +
   geom_smooth(
     method = "lm",
@@ -2165,7 +2336,7 @@ for (dataset in dataset_names) {
   # --- Plotting HEAT vs CKMT2 ---
     gg_2 <- ggplot(
   ucp1vHEAT,
-  aes(x = HEAT, y = log10(CKMT2 + 1), color = group)
+  aes(x = Non_HEAT.UCP1.correlated, y = log10(CKMT2 + 1), color = group)
 ) +
   geom_smooth(
     method = "lm",

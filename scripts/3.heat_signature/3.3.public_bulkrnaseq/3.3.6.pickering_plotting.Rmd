@@ -1,0 +1,153 @@
+---
+title: "Untitled"
+author: "Henrique"
+date: "2026-08-13"
+output: html_document
+---
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(stringr)
+library(patchwork)
+
+
+OUTPUT_DIR <- here("output/3.heat_signature/3.public_bulkrnaseq/figures")
+dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
+```
+
+Run this script after running 3.3.2 to generate the supplemental_table file
+```{r}
+Pickering <- supplemental_tables$Pickering %>%
+  mutate(
+    subject = str_extract(sample, "subject\\d+"),
+    order = factor(order)
+  ) |> 
+  rename("group" = " ")
+
+colnames(Pickering)
+
+plots <- list()
+for(plot_var in c("HEAT", "UCP1",  "CKMT2")){
+plots[[plot_var]] <- ggplot(Pickering, aes_string(x = "group", y = plot_var)) +
+
+  geom_boxplot(
+    aes(fill = group),
+    width = 0.6,
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+
+  geom_jitter(
+    aes(shape = subject),
+    width = 0.12,
+    size = 3,
+    alpha = 0.9,
+    stroke = 0.8,
+    fill = "white"
+  ) +
+
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format"
+  ) +
+
+  scale_fill_manual(
+    values = c(
+      "Beige" = "#ffdea6",
+      "White" = "#f0f0f0"
+    )
+  ) +
+
+  scale_shape_manual(
+    values = c(
+      21, 22, 23, 24, 25, 19
+    )
+  ) +
+
+  labs(
+    title = "ssGSEA HEAT in Beige and White adipocytes",
+    subtitle = "GSE256259 - Pickering 2024",
+    x = NULL,
+    y = plot_var,
+    fill = "Order",
+    shape = "Subject"
+  ) +
+
+  theme_classic(base_size = 14)
+}
+
+plots
+```
+
+```{r}
+for (plot_var in c("HEAT", "UCP1", "CKMT2")) {
+
+  plots[[plot_var]] <- ggplot(Pickering_mean,
+       aes_string(x = "group", y = plot_var)) +
+
+  geom_boxplot(
+    aes(fill = group),
+    width = 0.5,
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+
+  geom_line(
+    aes(group = subject),
+    colour = "grey70"
+  ) +
+
+  geom_point(
+    aes(fill = group, shape = subject),
+    size = 4,
+    colour = "black"
+  ) +
+
+  stat_compare_means(
+    paired = TRUE,
+    method = "wilcox.test",
+    label = "p.format", label.x.npc = "center"
+  ) +
+
+  scale_fill_manual(
+    values = c(
+      Beige = "#ffdea6",
+      White = "#f0f0f0"
+    )
+  ) +
+
+  scale_shape_manual(values = subject_shapes)+
+
+    labs(
+      x = NULL,
+      y = plot_var,
+      fill = NULL,
+      shape = "Subject"
+    ) +
+
+    theme_classic(base_size = 14) +
+    theme(legend.position = "none")
+}
+```
+
+# Check plots
+```{r, fig.width= 6, fig.height= 4.5}
+wrapped_plots <- wrap_plots(plots) + plot_annotation(
+    title = "Thermogenic markers score/expression",
+    subtitle = "Human beige x white adipocytes",
+    caption = "Source: GSE256259 - Pickering 2024",
+    theme = theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+                  plot.subtitle = element_text(hjust = 0.5, size = 12, face = "plain"))
+  )
+
+wrapped_plots
+```
+```{r}
+#Save
+ggsave(file.path(OUTPUT_DIR, "pickering_boxplot.png"), wrapped_plots, width = 6, height = 4.5)
+ggsave(file.path(OUTPUT_DIR, "pickering_boxplot.pdf"), wrapped_plots, width = 6, height = 4.5)
+
+```
+

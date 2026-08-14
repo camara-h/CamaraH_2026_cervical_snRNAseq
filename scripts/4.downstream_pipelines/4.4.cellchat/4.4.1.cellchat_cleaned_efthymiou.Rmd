@@ -38,7 +38,7 @@ INPUT_RDS <- here(
 "data/5.published_datasets/Public_snRNAseq/Efthymiou 2025/modified/s_objectf1_080423.rds"
 )
 
-OUTPUT_DATA_DIR <- here("output", "4.downstream_pipelines", "cellchat", "data")
+OUTPUT_DATA_DIR <- here("output", "4.downstream_pipelines", "cellchat", "data", "efthymiou")
 dir.create(OUTPUT_DATA_DIR, showWarnings = FALSE, recursive = TRUE)
 
 # Which population.size settings to run
@@ -55,17 +55,17 @@ OUTPUT_PATHS <- lapply(POP_SIZE_VALUES, function(pop_size) {
 
   list(
     pop_size = pop_size,
-    deep = file.path(
+    iat = file.path(
       OUTPUT_DATA_DIR,
-      paste0("cellchat_deep_", label, "_cell_type_short.rds")
+      paste0("cellchat_iat_", label, "_cluster.rds")
     ),
-    superficial = file.path(
+    sat = file.path(
       OUTPUT_DATA_DIR,
-      paste0("cellchat_superficial_", label, "_cell_type_short.rds")
+      paste0("cellchat_sat_", label, "_cluster.rds")
     ),
     merged = file.path(
       OUTPUT_DATA_DIR,
-      paste0("cellchat_merged_", label, "_cell_type_short.rds")
+      paste0("cellchat_merged_", label, "_cluster.rds")
     )
   )
 })
@@ -109,17 +109,30 @@ run_cellchat <- function(seurat_obj,
 
 ```{r}
 seurat_obj <- readRDS(INPUT_RDS)
+```
+
+
+```{r}
+meta <- seurat_obj@meta.data
+meta <- meta |> 
+  rownames_to_column("barcode") |> 
+  mutate(samples = str_remove_all(barcode, "^[ATGC]+-1_")) |> 
+  column_to_rownames("barcode")
+seurat_obj@meta.data <- meta
 
 
 cellchat_sample_summary <- seurat_obj@meta.data %>%
-  filter(neck_region %in% c("Deep", "Superficial")) %>%
-  count(neck_region, sample, cell_type_short, name = "n_nuclei") %>%
-  arrange(neck_region, sample, cell_type_short)
+  rownames_to_column("barcode") |> 
+  mutate(sample = str_remove_all(barcode, "^[ATGC]+-1_")) |> 
+  count(depot, samples, cluster, name = "n_nuclei") %>%
+  arrange(depot, samples, cluster)
 
 readr::write_csv(
   cellchat_sample_summary,
   file.path(OUTPUT_DATA_DIR, "cellchat_input_nuclei_by_sample_depot_celltype.csv")
 )
+
+cellchat_sample_summary
 ```
 
 # Run CellChat by depot
@@ -140,11 +153,11 @@ for (nm in names(OUTPUT_PATHS)) {
   # -----------------------------------------------------------------------
   # Run CellChat on the Deep neck_region subset
   # -----------------------------------------------------------------------
-  deep_cellchat <- run_cellchat(
+  iat_cellchat <- run_cellchat(
     seurat_obj = seurat_obj,
-    subset_ident = "neck_region",
-    idents = "Deep",
-    group.by = "cell_type_short",
+    subset_ident = "depot",
+    idents = "IAT",
+    group.by = "cluster",
     population.size = cfg$pop_size
   )
 
@@ -152,26 +165,26 @@ for (nm in names(OUTPUT_PATHS)) {
   # Run CellChat on the Superficial neck_region subset
   # -----------------------------------------------------------------------
   # This repeats the same workflow as above, but for the Superficial depot.
-  superficial_cellchat <- run_cellchat(
+  sat_cellchat <- run_cellchat(
     seurat_obj = seurat_obj,
-    subset_ident = "neck_region",
-    idents = "Superficial",
-    group.by = "cell_type_short",
+    subset_ident = "depot",
+    idents = "SAT",
+    group.by = "cluster",
     population.size = cfg$pop_size
   )
 
   # -----------------------------------------------------------------------
   # Save the depot-specific CellChat objects to disk
   # -----------------------------------------------------------------------
-  saveRDS(deep_cellchat, cfg$deep)
-  saveRDS(superficial_cellchat, cfg$superficial)
+  saveRDS(iat_cellchat, cfg$iat)
+  saveRDS(sat_cellchat, cfg$sat)
 
   # -----------------------------------------------------------------------
   # Combine the two depot-specific CellChat objects into a named list
   # -----------------------------------------------------------------------
   object_list <- list(
-    Deep = deep_cellchat,
-    Superficial = superficial_cellchat
+    iat = iat_cellchat,
+    sat = sat_cellchat
   )
 
   # -----------------------------------------------------------------------
@@ -189,8 +202,8 @@ for (nm in names(OUTPUT_PATHS)) {
   # Store all results in memory as well
   # -----------------------------------------------------------------------
   cellchat_results[[nm]] <- list(
-    deep = deep_cellchat,
-    superficial = superficial_cellchat,
+    iat = iat_cellchat,
+    sat = sat_cellchat,
     merged = cellchat_merged
   )
 }

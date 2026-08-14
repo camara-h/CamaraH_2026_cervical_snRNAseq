@@ -126,6 +126,10 @@ gtex_subj_meta <- read_delim(
 
 gtex_subj_meta_annot <- read.xlsx(INPUT_GTEX_META_DICT)
 
+# #### Comment in for a quick way to replace the signatures ####
+# final_data <- final_data |> rename("replaced" = "HEAT", 
+#                                    "HEAT" = "Non_HEAT.UCP1.correlated")
+
 heat_meta <- final_data %>%
   select(HEAT, subject, tissue) %>%
   left_join(gtex_subj_meta, by = c("subject" = "SUBJID"))

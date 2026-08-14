@@ -27,6 +27,12 @@ BULK_DIR <- here("output", "3.heat_signature", "3.public_bulkrnaseq", "data", "C
 BULK_META_DIR <- here(
 "output", "3.heat_signature", "3.public_bulkrnaseq", "data", "Experimental_Design")
 
+INPUT_GMT <- c(here(
+  "output", "3.heat_signature", "data", "non_HEAT_UCP1_corr_signature.gmt" 
+),here(
+  "output", "3.heat_signature", "data", "heat_signature.gmt"
+))
+
 # Gene list in CSV format, one gene per row
 GENE_LIST_CSV <- here(
   "output",
@@ -97,16 +103,59 @@ for (dataset in dataset_names) {
     meta$group,
     levels = unique(meta$group[order(meta$order)])
   )
+  
+  # -------------------------------------------------------------------------
+  # Read the HEAT signature GMT and create a GeneSetCollection
+  # -------------------------------------------------------------------------
+  for(input_gmt in INPUT_GMT){
+    gmt_parsed <- lapply(INPUT_GMT, function(input_gmt) {
+      
+      gmt_data <- readLines(input_gmt)
+      
+      do.call(rbind, lapply(gmt_data, function(line) {
+        fields <- strsplit(line, "\t")[[1]]
+        
+        data.frame(
+          name = fields[1],
+          description = fields[2],
+          genes = fields[-(1:2)],
+          stringsAsFactors = FALSE
+        )
+      }))
+    })
+    
+    # Combine both GMT files
+    heat_signatures <- do.call(rbind, gmt_parsed)
+    
+    # Collapse genes by signature
+    gene_set_df <- heat_signatures %>%
+      filter(genes != "") %>%
+      group_by(name) %>%
+      summarise(
+        gene_list = list(unique(genes)),
+        .groups = "drop"
+      )
+    
+    # Convert to GeneSet objects
+    gene_sets <- lapply(seq_len(nrow(gene_set_df)), function(i) {
+      GeneSet(
+        gene_set_df$gene_list[[i]],
+        setName = gene_set_df$name[i]
+      )
+    })
+    
+    heat_collection <- GeneSetCollection(gene_sets)
+  }
 
   # -----------------------------------------------------------------------
-  # Build the gene set collection and run ssGSEA
+  # run ssGSEA
   # -----------------------------------------------------------------------
-  heat_collection <- GeneSetCollection(
-    GeneSet(
-      gene_list$Genes,
-      setName = GENE_LIST_NAME
-    )
-  )
+  # heat_collection <- GeneSetCollection(
+  #   GeneSet(
+  #     gene_list$Genes,
+  #     setName = GENE_LIST_NAME
+  #   )
+  # )
 
   expr_set <- ExpressionSet(assayData = as.matrix(object))
 
