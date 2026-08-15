@@ -2213,8 +2213,8 @@ ggsave(file.path(OUTPUT_DIR, "S3P_shamsi_violin.pdf"), plot = d, bg = "white", w
 
 ```
 
-# --- Panel 3A-D. ssGSEA vs UCP1 in bulkRNAseq ---
-## --- Load the ssGSEA data
+# --- Panel 3A-H. ssGSEA vs genes in bulkRNAseq ---
+## --- Determine files to loop over ---
 ```{r}
 #--- Determine files to loop over
 # Results files
@@ -2224,6 +2224,44 @@ SSGSEA_FILES <- grep("HEATvUCP1.csv", files, value = TRUE)
 
 # Define dataset names
 dataset_names <- c("Castella", "Din", "Gavrila", "Giroud", "Ohja")
+```
+
+## --- Read ssGSEA and clean datasets ---
+```{r}
+# Remove Sondergaard
+dataset_names_use <- grep(
+  "Sondergaard",
+  dataset_names,
+  ignore.case = TRUE,
+  invert = TRUE,
+  value = TRUE
+)
+
+# Read all datasets once
+ssgsea_data <- setNames(
+  lapply(dataset_names_use, function(dataset) {
+
+    dat <- read.csv(str_subset(SSGSEA_FILES, dataset)) %>%
+      rename(group = X.) %>%
+      mutate(
+        group = str_replace(group, "pheochromocytoma", "Pheo"),
+        group = str_replace(group, "control", "Control")
+      )
+
+    if (tolower(dataset) == "ojha") {
+      dat <- dat %>%
+        mutate(
+          group = factor(
+            group,
+            levels = c("Neonate", "Infant", "Child")
+          )
+        )
+    }
+
+    dat
+  }),
+  dataset_names_use
+)
 ```
 
 ```{r}
@@ -2243,140 +2281,239 @@ pheo_color <- c("control" = "grey25", "pheochromocytoma" = "darkgreen", "Control
 color_palette_gsea_bulk <- c(neck.color, dev_age_color, pheo_color)
 ```
 
-## --- Plotting ---
+## --- Setup plotting function ---
 ```{r}
-corrplot_list <- list()
-plot_data_list <- list()
+# -----------------------------
+#  Set up main plotting function 
+# -----------------------------
 
-# Filter out Sondergaard
-dataset_names <- grep("Sondergaard", dataset_names, ignore.case = TRUE, invert = TRUE, value = TRUE)
-# Loop over each sample and plot data
-for (dataset in dataset_names) {
-  ucp1vHEAT <- read.csv(str_subset(SSGSEA_FILES, dataset))
-  ucp1vHEAT <- ucp1vHEAT %>%
-    rename("group" = "X.") %>%
-    mutate(
-      group = str_replace(group, "pheochromocytoma", "Pheo"),
-      group = str_replace(group, "control", "Control")
+plot_signature_gene <- function(
+    dat,
+    signature,
+    gene,
+    dataset,
+    signature_label = signature
+) {
+
+  ggplot(
+    dat,
+    aes(
+      x = .data[[signature]],
+      y = log10(.data[[gene]] + 1),
+      color = group
     )
-  if (dataset == "ojha") {
-    ucp1vHEAT <- ucp1vHEAT %>%
-      mutate(group = factor(group, levels = c("Neonate", "Infant", "Child")))
-  }
-  
-  plot_data_list[[dataset]] <- ucp1vHEAT |> count(group)
-  write_csv(plot_data_list[[dataset]], file.path(OUTPUT_DIR, paste0(dataset,"_bulk_ssgsea_heat_n.csv")))
-
-  # --- Plotting HEAT vs UCP1 ---
-  gg_2 <- ggplot(
-  ucp1vHEAT,
-  aes(x = Non_HEAT.UCP1.correlated, y = log10(UCP1 + 1), color = group)
-) +
-  geom_smooth(
-    method = "lm",
-    formula = y ~ x,
-    linetype = "dashed",
-    linewidth = 0.1,
-    se = FALSE,
-    show.legend = FALSE
   ) +
-  stat_cor(
-    method = "pearson",
-    label.x.npc = "left",
-    label.y.npc = "top",
-    aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")),
-    size = 4 / 2.81
-  ) +
-  geom_point(size = 1) +
-  theme_nature_metabolism() +
-  theme(legend.position = "top") +
-  scale_color_manual(values = color_palette_gsea_bulk) +
-  labs(
-    x = "HEAT Score (ssGSEA)",
-    y = expression(log[10](UCP1 + 1)),
-    title = dataset_keys[dataset,]
-  )
-  
-  
-  print(gg_2)
-
-  corrplot_list[[dataset]] <- gg_2
+    geom_smooth(
+      method = "lm",
+      formula = y ~ x,
+      linetype = "dashed",
+      linewidth = 0.1,
+      se = FALSE,
+      show.legend = FALSE
+    ) +
+    stat_cor(
+      method = "pearson",
+      label.x.npc = "left",
+      label.y.npc = "top",
+      aes(
+        label = paste(
+          ..r.label..,
+          ..p.label..,
+          sep = "~`,`~"
+        )
+      ),
+      size = 4 / 2.81
+    ) +
+    geom_point(size = 1) +
+    theme_nature_metabolism() +
+    theme(legend.position = "top") +
+    scale_color_manual(values = color_palette_gsea_bulk) +
+    labs(
+      x = paste0(signature_label, " Score (ssGSEA)"),
+      y = bquote(log[10](.(gene) + 1)),
+      title = dataset_keys[dataset, ]
+    )
 }
+
+# -----------------------------
+#  Set up function to plot several datasets at once 
+# -----------------------------
+
+
+make_bulk_corrplots <- function(
+  data_list,
+  signatures = c(
+    "HEAT"                     = "HEAT",
+    "Non_HEAT.UCP1.correlated" = "non-HEAT",
+    "UCP1.correlated"          = "UCP1-correlated"
+  ),
+  genes = c("UCP1", "CKMT2"),
+  datasets = c("Gavrila", "Din", "Ohja", "Castella")
+) {
+
+  # Create all requested signature × gene combinations
+  combinations <- tidyr::crossing(
+    signature = names(signatures),
+    gene = genes
+  ) %>%
+    mutate(
+      signature_label = signatures[signature],
+      plot_name = paste(signature_label, gene, sep = "_")
+    )
+
+  # --------------------------------------------------
+  # Generate plots
+  # --------------------------------------------------
+
+  plots <- purrr::pmap(
+    combinations,
+    function(signature, gene, signature_label, plot_name) {
+
+      dataset_plots <- purrr::map(
+        datasets,
+        function(dataset) {
+
+          dat <- data_list[[dataset]]
+
+          ggplot(
+            dat,
+            aes(
+              x = .data[[signature]],
+              y = log10(.data[[gene]] + 1),
+              color = group
+            )
+          ) +
+            geom_smooth(
+              method = "lm",
+              formula = y ~ x,
+              linetype = "dashed",
+              linewidth = 0.1,
+              se = FALSE,
+              show.legend = FALSE
+            ) +
+            stat_cor(
+              method = "pearson",
+              label.x.npc = "left",
+              label.y.npc = "top",
+              aes(
+                label = paste(
+                  ..r.label..,
+                  ..p.label..,
+                  sep = "~`,`~"
+                )
+              ),
+              size = 4 / 2.81
+            ) +
+            geom_point(size = 1) +
+            theme_nature_metabolism() +
+            theme(legend.position = "top") +
+            scale_color_manual(
+              values = color_palette_gsea_bulk
+            ) +
+            labs(
+              x = str_wrap(paste0(signature_label, " Score (ssGSEA)"), 20),
+              y = bquote(log[10](.(gene) + 1)),
+              title = dataset_keys[dataset, ]
+            )
+        }
+      )
+
+      names(dataset_plots) <- datasets
+
+      # One row = one signature × gene combination
+      patchwork::wrap_plots(
+        dataset_plots,
+        nrow = 1
+      )
+    }
+  )
+
+  names(plots) <- combinations$plot_name
+
+
+  # --------------------------------------------------
+  # Wrap all signature × gene combinations
+  # --------------------------------------------------
+
+  wrapped <- patchwork::wrap_plots(
+    plots,
+    ncol = 1
+  )
+
+
+  # --------------------------------------------------
+  # Return both
+  # --------------------------------------------------
+
+  list(
+    plots = plots,
+    wrapped = wrapped,
+    combinations = combinations
+  )
+}
+```
+
+## --- Plotting ---
+```{r, fig.width=4.724409, fig.height=3.937008}
+mm_to_in(c(120,100))
+
+# -----------------------------
+#  UCP1 
+# -----------------------------
+
+ucp1_corrplots <- make_bulk_corrplots(
+  data_list = ssgsea_data,
+  genes = c("UCP1")
+)
+
+ucp1_corrplots$wrapped
+
+ggsave(here("output/99.figure_on_demand/0.review/bulk_corr_ucp1.png"), ucp1_corrplots$wrapped, width = 120, height = 100, units = "mm", dpi = 600, create.dir = TRUE)
+
+# -----------------------------
+#  CKMT2 
+# -----------------------------
+ckmt2_corrplots <- make_bulk_corrplots(
+  data_list = ssgsea_data, 
+  genes = c("CKMT2")
+)
+
+ckmt2_corrplots$wrapped
+
+ggsave(here("output/99.figure_on_demand/0.review/bulk_corr_ckmt2.png"), ckmt2_corrplots$wrapped, width = 120, height = 100, units = "mm", dpi = 600, create.dir = TRUE)
+```
+# --- Panel 3A-H. ssGSEA vs UCP1 in bulkRNAseq ---
+```{r}
+gg_heat_bulk_corrplot <- make_bulk_corrplots(
+  data_list = ssgsea_data, 
+  signatures = c("HEAT" = "HEAT"),
+  genes = c("UCP1")
+)
 ```
 
 ## --- Save plot ---
 ```{r, fig.width=7.086614, fig.height= 1.771654, warning=FALSE}
 # Wrap and save
-gg_heat_bulk_corrplot <- wrap_plots(corrplot_list[c("Gavrila", "Din", "Ohja", "Castella")], ncol = 4)
-gg_heat_bulk_corrplot
+gg_heat_bulk_corrplot$wrapped
 scale <- 180
-ggsave(file.path(OUTPUT_DIR, "3A-D_heat_ucp1_bulk_corrplot.pdf"), plot = gg_heat_bulk_corrplot, width = 180, height = 225 / 5, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "3A-D_heat_ucp1_bulk_corrplot.pdf"), plot = gg_heat_bulk_corrplot$wrapped, width = 180, height = 225 / 5, units = "mm", bg = "white",  dpi = 600)
 
 ```
 # --- Panel 3E-H. ssGSEA vs CKMT2 in bulkRNAseq ---
 ```{r}
-boxplots_list <- list()
-corrplot_list <- list()
-
-# Filter out Sondergaard
-dataset_names <- grep("Sondergaard", dataset_names, ignore.case = TRUE, invert = TRUE, value = TRUE)
-# Loop over each sample and plot data
-for (dataset in dataset_names) {
-  ucp1vHEAT <- read.csv(str_subset(SSGSEA_FILES, dataset))
-  ucp1vHEAT <- ucp1vHEAT %>%
-    rename("group" = "X.") %>%
-    mutate(
-      group = str_replace(group, "pheochromocytoma", "Pheo"),
-      group = str_replace(group, "control", "Control")
-    )
-  if (dataset == "ojha") {
-    ucp1vHEAT <- ucp1vHEAT %>%
-      mutate(group = factor(group, levels = c("Neonate", "Infant", "Child")))
-  }
-  # --- Plotting HEAT vs CKMT2 ---
-    gg_2 <- ggplot(
-  ucp1vHEAT,
-  aes(x = Non_HEAT.UCP1.correlated, y = log10(CKMT2 + 1), color = group)
-) +
-  geom_smooth(
-    method = "lm",
-    formula = y ~ x,
-    linetype = "dashed",
-    linewidth = 0.1,
-    se = FALSE,
-    show.legend = FALSE
-  ) +
-  stat_cor(
-    method = "pearson",
-    label.x.npc = "left",
-    label.y.npc = "top",
-    aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")),
-    size = 4 / 2.81
-  ) +
-  geom_point(size = 1) +
-  theme_nature_metabolism() +
-  theme(legend.position = "top") +
-  scale_color_manual(values = color_palette_gsea_bulk) +
-  labs(
-    x = "HEAT Score (ssGSEA)",
-    y = expression(log[10](CKMT2 + 1)),
-    title = dataset_keys[dataset,]
-  )
-  
-  
-  print(gg_2)
-
-  corrplot_list[[dataset]] <- gg_2
-}
+gg_heat_bulk_corrplot <- make_bulk_corrplots(
+  data_list = ssgsea_data, 
+  signatures = c("HEAT" = "HEAT"),
+  genes = c("CKMT2")
+)
 ```
 
 ## --- Save plot ---
 ```{r, fig.width=7.086614, fig.height= 1.771654, warning=FALSE}
 # Wrap and save
-gg_heat_bulk_corrplot <- wrap_plots(corrplot_list[c("Gavrila", "Din", "Ohja", "Castella")], ncol = 4)
-gg_heat_bulk_corrplot
+gg_heat_bulk_corrplot$wrapped
 scale <- 180
-ggsave(file.path(OUTPUT_DIR, "3E-H_heat_ckmt2_bulk_corrplot.pdf"), plot = gg_heat_bulk_corrplot, width = 180, height = 225 / 5, units = "mm", bg = "white",  dpi = 600)
+ggsave(file.path(OUTPUT_DIR, "3E-H_heat_ckmt2_bulk_corrplot.pdf"), plot = gg_heat_bulk_corrplot$wrapped, width = 180, height = 225 / 5, units = "mm", bg = "white",  dpi = 600)
 
 ```
 
